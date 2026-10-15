@@ -11,6 +11,7 @@ export default function Home() {
         <Logo />
         <Text className="font-semibold">
           Get started by editing{' '}
+          Yasmin was here
           <Text className="text-primary/70">app/index.tsx</Text>
         </Text>
       </Center>
