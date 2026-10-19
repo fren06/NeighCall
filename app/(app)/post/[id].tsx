@@ -1,24 +1,23 @@
+import { displayName, PersonAvatar } from '@/components/PersonAvatar';
 import { Button, ButtonIcon, ButtonText } from '@/components/ui/button';
 import { Heading } from '@/components/ui/heading';
-import { Icon } from '@/components/ui/icon';
 import { SafeAreaView } from '@/components/ui/safe-area-view';
 import { ScrollView } from '@/components/ui/scroll-view';
 import { Text } from '@/components/ui/text';
 import * as api from '@/lib/api';
 import { categoryMeta, STATUS_META, timeAgo, URGENCY_META } from '@/lib/post-meta';
 import { useSession } from '@/lib/session';
-import { useNotify } from '@/lib/use-notify';
+import { useOfferHelp } from '@/lib/use-offer-help';
 import type { FeedPost } from '@/types/models';
 import { router, useLocalSearchParams } from 'expo-router';
-import { ArrowLeft, HandHelping, VenetianMask } from 'lucide-react-native';
+import { ArrowLeft, HandHelping, MessageCircle } from 'lucide-react-native';
 import React, { useEffect, useState } from 'react';
 import { Image, View } from 'react-native';
 
-// Basic post detail. The chat hand-off for "Offer help" comes with the chat flow.
 export default function PostDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { user } = useSession();
-  const notify = useNotify();
+  const offerHelp = useOfferHelp();
   const [post, setPost] = useState<FeedPost | null>();
 
   useEffect(() => {
@@ -45,16 +44,10 @@ export default function PostDetail() {
         <>
           <ScrollView contentContainerClassName="w-full max-w-xl self-center gap-5 px-4 pb-8">
             <View className="flex-row items-center gap-3">
-              <View className="h-10 w-10 items-center justify-center rounded-full bg-secondary">
-                {author.kind === 'anonymous' ? (
-                  <Icon as={VenetianMask} size="sm" className="text-muted-foreground" />
-                ) : (
-                  <Text className="font-semibold">{author.name.charAt(0)}</Text>
-                )}
-              </View>
+              <PersonAvatar person={author} size="md" />
               <View>
                 <Text className="font-semibold">
-                  {author.kind === 'anonymous' ? author.alias : author.name}
+                  {displayName(author)}
                 </Text>
                 <Text size="xs" className="text-muted-foreground">
                   {author.kind === 'public' ? `Block ${author.block} · ` : 'Anonymous · '}
@@ -83,12 +76,23 @@ export default function PostDetail() {
             )}
           </ScrollView>
 
+          {post.is_mine && post.helper_count > 0 && (
+            <View className="w-full max-w-xl self-center border-t border-border p-4">
+              <Button size="lg" variant="outline" onPress={() => router.push('/chats')}>
+                <ButtonIcon as={MessageCircle} />
+                <ButtonText>
+                  {post.helper_count} {post.helper_count === 1 ? 'neighbour' : 'neighbours'} offered help
+                </ButtonText>
+              </Button>
+            </View>
+          )}
+
           {canHelp && (
             <View className="w-full max-w-xl self-center border-t border-border p-4">
               <Button
                 size="lg"
                 variant="brand"
-                onPress={() => notify('Chat is coming next', 'Offer Help will open a private chat here.')}
+                onPress={() => offerHelp(post.id)}
               >
                 <ButtonIcon as={HandHelping} />
                 <ButtonText>Offer help</ButtonText>

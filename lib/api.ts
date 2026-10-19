@@ -4,8 +4,13 @@ import { analyzeText } from '@/lib/mock-ai';
 import * as mock from '@/lib/mock-data';
 import type {
   Bulletin,
+  ChatMessage,
+  ChatPeer,
+  Conversation,
+  ConversationSummary,
   Estate,
   FeedPost,
+  Message,
   NewPostInput,
   PostAnalysis,
   ReportTarget,
@@ -180,6 +185,184 @@ export async function createReport(
     status: 'open',
     created_at: new Date().toISOString(),
   });
+}
+
+// ─── Chat ─────────────────────────────────────────────────────────────────
+
+// Mock stand-in for Supabase Realtime: screens subscribe to a conversation
+// and get called whenever a message is added to it.
+const chatListeners = new Map<string, Set<() => void>>();
+
+export function subscribeToConversation(conversationId: string, onChange: () => void) {
+  const set = chatListeners.get(conversationId) ?? new Set();
+  set.add(onChange);
+  chatListeners.set(conversationId, set);
+  return () => {
+    set.delete(onChange);
+  };
+}
+
+function emit(conversationId: string) {
+  chatListeners.get(conversationId)?.forEach((fn) => fn());
+}
+
+const findUser = (id: string) => mock.users.find((u) => u.id === id);
+const findPost = (id: string) => mock.posts.find((p) => p.id === id);
+
+/** Helpers are always public; requesters stay anonymous until they share. */
+function peerFor(viewer: User, conv: Conversation): ChatPeer {
+  const isRequester = conv.requester_id === viewer.id;
+  const peer = findUser(isRequester ? conv.helper_id : conv.requester_id);
+  const post = findPost(conv.post_id);
+  if (!isRequester && post?.author.kind === 'anonymous' && !conv.is_identity_revealed) {
+    return { kind: 'anonymous', alias: post.author.alias };
+  }
+  return { kind: 'public', name: peer?.name ?? 'Neighbour', block: peer?.block ?? '?' };
+}
+
+function toChatMessage(m: Message, viewerId: string): ChatMessage {
+  const { sender_id, conversation_id, ...rest } = m;
+  return { ...rest, from: m.type === 'system' ? 'system' : sender_id === viewerId ? 'me' : 'them' };
+}
+
+function summarize(conv: Conversation, viewer: User): ConversationSummary {
+  const post = findPost(conv.post_id);
+  const msgs = mock.messages.filter((m) => m.conversation_id === conv.id);
+  const last = msgs[msgs.length - 1];
+  return {
+    id: conv.id,
+    post_id: conv.post_id,
+    post_title: post?.analysis?.punchline ?? post?.content.slice(0, 60) ?? 'Request',
+    my_role: conv.requester_id === viewer.id ? 'requester' : 'helper',
+    peer: peerFor(viewer, conv),
+    is_anonymous_post: post?.author.kind === 'anonymous',
+    is_identity_revealed: conv.is_identity_revealed,
+    last_message: last && toChatMessage(last, viewer.id),
+    updated_at: last?.created_at ?? conv.created_at,
+  };
+}
+
+function participantConversation(viewer: User, conversationId: string) {
+  const conv = mock.conversations.find((c) => c.id === conversationId);
+  if (!conv || (conv.requester_id !== viewer.id && conv.helper_id !== viewer.id)) {
+    throw new ApiError('Conversation not found.');
+  }
+  return conv;
+}
+
+function addMessage(conv: Conversation, senderId: string, fields: Partial<Message>) {
+  mock.messages.push({
+    id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    conversation_id: conv.id,
+    sender_id: senderId,
+    type: 'text',
+    created_at: new Date().toISOString(),
+    ...fields,
+  });
+  emit(conv.id);
+}
+
+export async function getConversations(viewer: User): Promise<ConversationSummary[]> {
+  await delay(300);
+  return mock.conversations
+    .filter((c) => c.requester_id === viewer.id || c.helper_id === viewer.id)
+    .map((c) => summarize(c, viewer))
+    .sort((a, b) => b.updated_at.localeCompare(a.updated_at));
+}
+
+export async function getConversation(
+  viewer: User,
+  conversationId: string
+): Promise<{ summary: ConversationSummary; messages: ChatMessage[] }> {
+  const conv = participantConversation(viewer, conversationId);
+  return {
+    summary: summarize(conv, viewer),
+    messages: mock.messages
+      .filter((m) => m.conversation_id === conv.id)
+      .map((m) => toChatMessage(m, viewer.id)),
+  };
+}
+
+/** Opens (or reuses) the helper's 1-to-1 chat with the post's author. */
+export async function offerHelp(viewer: User, postId: string): Promise<string> {
+  await delay(300);
+  const post = findPost(postId);
+  if (!post || post.estate_id !== viewer.estate_id) throw new ApiError('Post not found.');
+  if (post.author_id === viewer.id) throw new ApiError("You can't offer help on your own post.");
+
+  const existing = mock.conversations.find(
+    (c) => c.post_id === postId && c.helper_id === viewer.id
+  );
+  if (existing) return existing.id;
+
+  const conv: Conversation = {
+    id: `cnv-${Date.now()}`,
+    post_id: postId,
+    requester_id: post.author_id,
+    helper_id: viewer.id,
+    is_identity_revealed: false,
+    created_at: new Date().toISOString(),
+  };
+  mock.conversations.push(conv);
+  post.helper_count += 1;
+  addMessage(conv, viewer.id, {
+    type: 'system',
+    text: `${viewer.name} offered to help with this request.`,
+  });
+  return conv.id;
+}
+
+export async function sendMessage(viewer: User, conversationId: string, text: string) {
+  const conv = participantConversation(viewer, conversationId);
+  addMessage(conv, viewer.id, { text: text.trim() });
+  scheduleMockReply(conv, viewer.id);
+}
+
+/** Posts the viewer's verified contact card into the chat. */
+export async function shareIdentity(viewer: User, conversationId: string) {
+  await delay(300);
+  const conv = participantConversation(viewer, conversationId);
+  if (conv.requester_id === viewer.id) conv.is_identity_revealed = true;
+  addMessage(conv, viewer.id, {
+    type: 'identity_card',
+    identity_card: {
+      name: viewer.name,
+      block: viewer.block,
+      unit_number: viewer.unit_number,
+      phone: viewer.phone,
+    },
+  });
+}
+
+/** Reports the other participant; their user id is resolved server-side. */
+export async function reportChatPeer(viewer: User, conversationId: string, reason: string) {
+  const conv = participantConversation(viewer, conversationId);
+  const peerId = conv.requester_id === viewer.id ? conv.helper_id : conv.requester_id;
+  await createReport(viewer.id, 'user', peerId, reason);
+}
+
+// Scripted replies so the chat feels alive until real users are connected.
+const MOCK_REPLIES = {
+  fromHelper: [
+    'Sure! What time works best for you?',
+    "Okay, I'll bring what I need.",
+    'On my way 👍',
+  ],
+  fromRequester: [
+    'Thank you so much, that would really help! 🙏',
+    'Is later this evening okay for you?',
+    'Great, see you then!',
+  ],
+};
+
+function scheduleMockReply(conv: Conversation, viewerId: string) {
+  const peerId = conv.requester_id === viewerId ? conv.helper_id : conv.requester_id;
+  const script = peerId === conv.helper_id ? MOCK_REPLIES.fromHelper : MOCK_REPLIES.fromRequester;
+  const sent = mock.messages.filter(
+    (m) => m.conversation_id === conv.id && m.sender_id === peerId && m.type === 'text'
+  ).length;
+  const reply = script[sent % script.length];
+  setTimeout(() => addMessage(conv, peerId, { text: reply }), 1500 + Math.random() * 1000);
 }
 
 /** Dev-only: simulates the admin acting on a registration. */

@@ -10,6 +10,7 @@ import { Text } from '@/components/ui/text';
 import * as api from '@/lib/api';
 import { useSession } from '@/lib/session';
 import { useNotify } from '@/lib/use-notify';
+import { useOfferHelp } from '@/lib/use-offer-help';
 import type { Bulletin, Estate, FeedPost, User } from '@/types/models';
 import { router, useFocusEffect } from 'expo-router';
 import { Bell, Inbox, Plus } from 'lucide-react-native';
@@ -51,6 +52,7 @@ function greeting() {
 export default function Home() {
   const { user } = useSession();
   const notify = useNotify();
+  const offerHelp = useOfferHelp();
   const [estate, setEstate] = useState<Estate>();
   const [posts, setPosts] = useState<FeedPost[]>();
   const [bulletins, setBulletins] = useState<Bulletin[]>([]);
@@ -163,7 +165,7 @@ export default function Home() {
             post={item}
             matchesSkills={matchesSkills(item, user)}
             onPress={() => openPost(item)}
-            onOfferHelp={() => openPost(item)}
+            onOfferHelp={() => offerHelp(item.id)}
             onReport={() => report(item)}
           />
         )}

@@ -144,6 +144,37 @@ export interface Message {
   created_at: Timestamp;
 }
 
+/**
+ * A message as the client sees it. Sender is relative to the viewer so an
+ * anonymous requester's user id never reaches the helper's device.
+ */
+export interface ChatMessage {
+  id: ID;
+  from: 'me' | 'them' | 'system';
+  type: MessageType;
+  text?: string;
+  identity_card?: IdentityCard;
+  created_at: Timestamp;
+}
+
+/** The other person in a conversation, as the viewer is allowed to see them. */
+export type ChatPeer = AuthorDisplay;
+
+export interface ConversationSummary {
+  id: ID;
+  post_id: ID;
+  post_title: string;
+  /** Viewer's role: they offered help, or they wrote the request. */
+  my_role: 'helper' | 'requester';
+  peer: ChatPeer;
+  /** The request was posted anonymously. */
+  is_anonymous_post: boolean;
+  /** Requester has shared their details (only the requester can be anonymous). */
+  is_identity_revealed: boolean;
+  last_message?: ChatMessage;
+  updated_at: Timestamp;
+}
+
 // ─── Bulletins & moderation ───────────────────────────────────────────────
 
 export interface Bulletin {

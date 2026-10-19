@@ -6,6 +6,7 @@ export default function AppLayout() {
     <Stack screenOptions={{ headerShown: false }}>
       <Stack.Screen name="(tabs)" />
       <Stack.Screen name="post/[id]" />
+      <Stack.Screen name="chat/[id]" />
       <Stack.Screen name="new-post" options={{ presentation: 'modal' }} />
     </Stack>
   );

@@ -5,7 +5,8 @@ import { Pressable } from '@/components/ui/pressable';
 import { Text } from '@/components/ui/text';
 import { categoryMeta, STATUS_META, timeAgo, URGENCY_META } from '@/lib/post-meta';
 import type { FeedPost } from '@/types/models';
-import { EllipsisVertical, Flag, HandHelping, Sparkles, VenetianMask } from 'lucide-react-native';
+import { displayName, PersonAvatar } from '@/components/PersonAvatar';
+import { EllipsisVertical, Flag, HandHelping, Sparkles } from 'lucide-react-native';
 import React from 'react';
 import { Image, View } from 'react-native';
 
@@ -34,18 +35,10 @@ export function PostCard({ post, matchesSkills, onPress, onOfferHelp, onReport }
     >
       {/* Author row */}
       <View className="flex-row items-center gap-3">
-        <View className="h-9 w-9 items-center justify-center rounded-full bg-secondary">
-          {author.kind === 'anonymous' ? (
-            <Icon as={VenetianMask} size="sm" className="text-muted-foreground" />
-          ) : (
-            <Text size="sm" className="font-semibold">
-              {author.name.charAt(0)}
-            </Text>
-          )}
-        </View>
+        <PersonAvatar person={author} />
         <View className="flex-1">
           <Text size="sm" className="font-semibold" numberOfLines={1}>
-            {author.kind === 'anonymous' ? author.alias : author.name}
+            {displayName(author)}
             {post.is_mine && <Text size="sm" className="font-normal text-muted-foreground"> (you)</Text>}
           </Text>
           <Text size="xs" className="text-muted-foreground">

@@ -1,5 +1,13 @@
 // In-memory sample data used until Supabase is connected.
-import type { Bulletin, Estate, FeedPost, Report, User } from '@/types/models';
+import type {
+  Bulletin,
+  Conversation,
+  Estate,
+  FeedPost,
+  Message,
+  Report,
+  User,
+} from '@/types/models';
 
 /** Post row as stored server-side: includes the private author_id. */
 export type StoredPost = Omit<FeedPost, 'is_mine'> & { author_id: string };
@@ -126,7 +134,7 @@ export const posts: StoredPost[] = [
       punchline: 'Ladder loan needed for a quick ceiling light swap!',
     },
     status: 'open',
-    helper_count: 0,
+    helper_count: 1,
     created_at: hoursAgo(30),
   },
   {
@@ -162,3 +170,35 @@ export const bulletins: Bulletin[] = [
 ];
 
 export const reports: Report[] = [];
+
+// Hafiz offered to help with Aisyah's anonymous ladder post (pst-4), so the
+// "Share My Details" flow can be tried from the requester's side.
+export const conversations: Conversation[] = [
+  {
+    id: 'cnv-1',
+    post_id: 'pst-4',
+    requester_id: 'usr-1',
+    helper_id: 'usr-hafiz',
+    is_identity_revealed: false,
+    created_at: hoursAgo(20),
+  },
+];
+
+export const messages: Message[] = [
+  {
+    id: 'msg-1',
+    conversation_id: 'cnv-1',
+    sender_id: 'usr-hafiz',
+    type: 'system',
+    text: 'Hafiz Ismail offered to help with this request.',
+    created_at: hoursAgo(20),
+  },
+  {
+    id: 'msg-2',
+    conversation_id: 'cnv-1',
+    sender_id: 'usr-hafiz',
+    type: 'text',
+    text: 'Hi! I have a 6-step ladder you can borrow. I can also help swap the light if you want.',
+    created_at: hoursAgo(19.9),
+  },
+];
