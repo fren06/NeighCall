@@ -12,13 +12,14 @@ import * as api from '@/lib/api';
 import { categoryMeta, URGENCY_META } from '@/lib/post-meta';
 import { useSession } from '@/lib/session';
 import { palette } from '@/lib/theme';
+import { useIsDark } from '@/lib/theme-mode';
 import { useNotify } from '@/lib/use-notify';
 import type { PostAnalysis } from '@/types/models';
 import * as ImagePicker from 'expo-image-picker';
 import { router } from 'expo-router';
 import { BellRing, Camera, ImagePlus, Sparkles, VenetianMask, X } from 'lucide-react-native';
 import React, { useEffect, useState } from 'react';
-import { Image, Platform, useColorScheme, View } from 'react-native';
+import { Image, Platform, View } from 'react-native';
 
 const MIN_LENGTH = 15;
 const MAX_LENGTH = 500;
@@ -26,7 +27,7 @@ const MAX_LENGTH = 500;
 export default function NewPost() {
   const { user } = useSession();
   const notify = useNotify();
-  const colors = palette[useColorScheme() === 'dark' ? 'dark' : 'light'];
+  const colors = palette[useIsDark() ? 'dark' : 'light'];
 
   const [content, setContent] = useState('');
   const [imageUri, setImageUri] = useState<string>();

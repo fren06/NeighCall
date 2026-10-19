@@ -2,6 +2,7 @@
 // mock implementation for Supabase later doesn't touch any UI code.
 import { analyzeText } from '@/lib/mock-ai';
 import * as mock from '@/lib/mock-data';
+import { DEFAULT_NOTIFICATIONS } from '@/types/models';
 import type {
   Bulletin,
   ChatMessage,
@@ -41,6 +42,7 @@ export async function signUp(input: SignUpInput): Promise<User> {
   const user: User = {
     ...profile,
     email,
+    notifications: DEFAULT_NOTIFICATIONS,
     id: `usr-${Date.now()}`,
     role: 'resident',
     status: 'pending',
@@ -363,6 +365,21 @@ function scheduleMockReply(conv: Conversation, viewerId: string) {
   ).length;
   const reply = script[sent % script.length];
   setTimeout(() => addMessage(conv, peerId, { text: reply }), 1500 + Math.random() * 1000);
+}
+
+/**
+ * Settings an approved resident can change freely. Name, address and estate
+ * were verified by management, so they aren't editable here.
+ */
+export async function updatePreferences(
+  userId: string,
+  changes: Partial<Pick<User, 'phone' | 'skills' | 'notifications'>>
+): Promise<User> {
+  await delay(300);
+  const user = mock.users.find((u) => u.id === userId);
+  if (!user) throw new ApiError('User not found.');
+  Object.assign(user, changes);
+  return { ...user };
 }
 
 /** Dev-only: simulates the admin acting on a registration. */

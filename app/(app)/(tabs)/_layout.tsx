@@ -1,11 +1,11 @@
 import { palette } from '@/lib/theme';
+import { useIsDark } from '@/lib/theme-mode';
 import { Tabs } from 'expo-router/js-tabs';
 import { House, MessageCircle, UserRound } from 'lucide-react-native';
 import React from 'react';
-import { useColorScheme } from 'react-native';
 
 export default function TabsLayout() {
-  const colors = palette[useColorScheme() === 'dark' ? 'dark' : 'light'];
+  const colors = palette[useIsDark() ? 'dark' : 'light'];
 
   return (
     <Tabs

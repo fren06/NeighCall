@@ -1,13 +1,13 @@
 import { GluestackUIProvider } from '@/components/ui/gluestack-ui-provider';
 import '@/global.css';
 import { SessionProvider, useSession } from '@/lib/session';
+import { ThemeModeProvider, useIsDark, useThemeMode } from '@/lib/theme-mode';
 import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
 import { useFonts } from 'expo-font';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
-import { useColorScheme } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 export {
@@ -35,21 +35,24 @@ export default function RootLayout() {
   }, [loaded]);
 
   return (
-    <SessionProvider>
-      <RootLayoutNav />
-    </SessionProvider>
+    <ThemeModeProvider>
+      <SessionProvider>
+        <RootLayoutNav />
+      </SessionProvider>
+    </ThemeModeProvider>
   );
 }
 
 function RootLayoutNav() {
-  const isDark = useColorScheme() === 'dark';
+  const isDark = useIsDark();
+  const { mode } = useThemeMode();
   const { user } = useSession();
   const status = user?.status;
 
   return (
     <ThemeProvider value={isDark ? DarkTheme : DefaultTheme}>
       <GestureHandlerRootView style={{ flex: 1 }}>
-        <GluestackUIProvider mode="system">
+        <GluestackUIProvider mode={mode}>
           <StatusBar style={isDark ? 'light' : 'dark'} />
           {/* Each group is only reachable in the matching session state;
               when the state changes, the router sends the user to index,

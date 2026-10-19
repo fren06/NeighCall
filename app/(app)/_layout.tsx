@@ -8,6 +8,7 @@ export default function AppLayout() {
       <Stack.Screen name="post/[id]" />
       <Stack.Screen name="chat/[id]" />
       <Stack.Screen name="new-post" options={{ presentation: 'modal' }} />
+      <Stack.Screen name="edit-profile" options={{ presentation: 'modal' }} />
     </Stack>
   );
 }

@@ -38,6 +38,23 @@ export interface Address {
   street: string;
 }
 
+export interface NotificationPrefs {
+  /** Push alerts when a new request matches one of the user's skills. */
+  skill_matches: boolean;
+  /** Mute non-urgent pushes overnight. Important bulletins still come through. */
+  quiet_hours: {
+    enabled: boolean;
+    /** 24h "HH:mm", local time. */
+    start: string;
+    end: string;
+  };
+}
+
+export const DEFAULT_NOTIFICATIONS: NotificationPrefs = {
+  skill_matches: true,
+  quiet_hours: { enabled: false, start: '22:00', end: '07:00' },
+};
+
 export interface User extends Address {
   id: ID;
   estate_id: ID;
@@ -45,6 +62,7 @@ export interface User extends Address {
   email: string;
   phone: string;
   skills: SkillId[];
+  notifications: NotificationPrefs;
   role: UserRole;
   status: UserStatus;
   /** Message from the admin when status is needs_info / rejected. */

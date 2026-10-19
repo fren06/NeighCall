@@ -8,6 +8,7 @@ import type {
   Report,
   User,
 } from '@/types/models';
+import { DEFAULT_NOTIFICATIONS } from '@/types/models';
 
 /** Post row as stored server-side: includes the private author_id. */
 export type StoredPost = Omit<FeedPost, 'is_mine'> & { author_id: string };
@@ -32,6 +33,10 @@ export const users: User[] = [
     unit_number: '12-03',
     street: 'Jalan Melati 3',
     skills: ['it_wifi', 'tutoring'],
+    notifications: {
+      skill_matches: true,
+      quiet_hours: { enabled: true, start: '23:00', end: '07:00' },
+    },
     role: 'resident',
     status: 'approved',
     created_at: hoursAgo(24 * 30),
@@ -56,6 +61,7 @@ export const users: User[] = [
       unit_number: `0${i + 2}-1${i}`,
       street: 'Jalan Melati 3',
       skills: [...skills],
+      notifications: DEFAULT_NOTIFICATIONS,
       role: 'resident',
       status: 'approved',
       created_at: hoursAgo(24 * (60 + i)),
