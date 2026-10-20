@@ -28,6 +28,8 @@ const buttonStyle = tva({
     variant: {
       default:
         'bg-primary data-[hover=true]:bg-primary/90 data-[active=true]:bg-primary/90',
+      brand:
+        'bg-brand data-[hover=true]:bg-brand/90 data-[active=true]:bg-brand/90',
       destructive:
         'bg-destructive data-[hover=true]:bg-destructive/90 data-[active=true]:bg-destructive/90 focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40 dark:bg-destructive/60',
       outline:
@@ -50,6 +52,7 @@ const buttonTextStyle = tva({
   parentVariants: {
     variant: {
       default: 'text-primary-foreground',
+      brand: 'text-brand-foreground',
       destructive: 'text-white',
       outline: 'text-foreground data-[hover=true]:text-accent-foreground data-[active=true]:text-accent-foreground',
       secondary: 'text-secondary-foreground',
@@ -82,6 +85,7 @@ const buttonIconStyle = tva({
   parentVariants: {
     variant: {
       default: 'text-primary-foreground',
+      brand: 'text-brand-foreground',
       destructive: 'text-white',
       outline:
         'text-foreground data-[hover=true]:text-accent-foreground data-[active=true]:text-accent-foreground',
