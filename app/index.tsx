@@ -9,3 +9,4 @@ export default function Index() {
   if (user.status !== 'approved') return <Redirect href="/pending" />;
   return <Redirect href="/home" />;
 }
+ 

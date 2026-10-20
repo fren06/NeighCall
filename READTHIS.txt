@@ -1,0 +1,123 @@
+//! DELETE THIS LATER EH DONT FORGET 
+READ THIS IF YOU DONT UNDERSTAND 
+
+Explanation of the Codes in the lib Folder
+
+The lib directory serves as the core data access layer, local state management, and business logic. It is designed with clean architecture principles so the frontend UI interacts purely with abstract service methods. When switching from local mock data to Supabase and an actual LLM, the UI components do not need to be modified.
+
+lib/
+├── mock-data.ts      # In-memory database records (tables)
+├── mock-ai.ts        # Heuristic classifier simulating the AI pipeline
+├── api.ts            # Data access API layer (CRUD, auth, pub/sub)
+├── session.tsx       # Auth context provider & user state hook
+├── theme-mode.tsx    # Appearance / theme context (System/Light/Dark)
+├── theme.ts          # Raw hex/rgb color palettes for navigators
+├── post-meta.ts      # Display metadata (icons, colors, badges, timeAgo)
+├── use-notify.tsx    # Toast notification hook
+└── use-offer-help.ts # Navigation hook for initiating help chat
+
+
+lib/mock-data.ts
+
+Role: In-memory database tables.
+
+What it does: Holds sample records matching future Postgres tables:
+estates: Estates/condos in Kuala Lumpur (e.g., Taman Melati Residences).
+users: Residents with associated block, unit numbers, skills, and notification settings. Includes default account aisyah@example.com (password: 'password').
+posts: Help requests with public or anonymous author tags, status (open, in_progress, resolved), and helper counts.
+bulletins, conversations, messages, and reports.
+Key Type: StoredPost preserves the private author_id on the server/mock store to prevent leaking author IDs on anonymous posts.
+
+
+lib/mock-ai.ts
+
+Role: Stand-in for LLM classification and structured extraction.
+
+What it does:
+analyzeText(content, block): Runs regex-based pattern matching on user request text.
+Detects Category: Matches keywords across 12 skills (e.g., leak/pipe/sink 
+→
+→ plumbing, router/wifi 
+→
+→ it_wifi).
+Detects Urgency: Checks for emergency cues (emergency, asap, flood 
+→
+→ high; today, tonight 
+→
+→ medium; otherwise low).
+Extracts Tools Needed: Looks for common equipment like pipe wrench, ladder, multimeter.
+Generates a Punchline: Formulates a feed title (e.g., "Leaky pipe emergency near Block B! Can any handyman assist?"), safely omitting the block number if the post is anonymous.
+
+
+lib/api.ts
+
+Role: Central data access layer and service interface. Every UI screen accesses data through these functions. Artificial delays (delay(300–700ms)) simulate network latency.
+
+Key modules inside api.ts:
+
+Authentication & Profile:
+signUp() / signIn(): Manages user accounts and credentials.
+updateProfile(): Updates details and resets status from needs_info back to pending.
+updatePreferences(): Allows residents to update phone numbers, skills, and notification settings (keeping verified names and addresses locked).
+Feed & Posting:
+createPost(): Runs the AI analyzer, generates an anonymous alias (Neighbor #XXX) if toggled, stores the post, and calculates how many neighbors with matching skills will be alerted (countSkillMatches).
+getFeed(): Returns posts for the user's estate. It strips author_id via toFeedPost and sets is_mine: boolean.
+Chat & Real-Time Mock:
+subscribeToConversation(id, onChange): An in-memory observer (pub/sub pattern) simulating Supabase Realtime so chat screens update live when messages arrive.
+offerHelp(): Creates a private 1-to-1 conversation between helper and requester.
+sendMessage(): Sends a message and triggers scheduleMockReply after 1.5–2.5 seconds to simulate conversation from the other party.
+shareIdentity(): Posts an identity_card message. If sent by an anonymous requester, it sets is_identity_revealed = true.
+Moderation & Dev Tools:
+createReport() & reportChatPeer(): Submits reports against users or posts.
+devSetStatus(): Dev-only helper that simulates estate managers approving, requesting info, or rejecting residents.
+
+
+lib/session.tsx
+
+Role: Global authentication state management.
+
+Uses React Context (SessionProvider and useSession).
+Stores the active User object in state.
+Exposes signIn, signUp, signOut, and setUser (used to update the session when profile or verification status changes).
+
+
+lib/theme-mode.tsx
+
+Role: Theme preference context.
+
+Provides ThemeModeProvider and useThemeMode to manage 'system' | 'light' | 'dark'.
+useIsDark(): Resolves the active theme by combining the user's explicit preference with React Native’s useColorScheme() when set to 'system'.
+
+
+lib/theme.ts
+
+Role: Static color constants.
+
+Exports palette with light and dark RGB values (brand, background, border, mutedForeground).
+Used in places where NativeWind Tailwind classes cannot be directly applied, such as Expo Router stack/tab navigator options (tabBarStyle, headerStyle).
+
+
+lib/post-meta.ts
+
+Role: UI presentation mapping for posts.
+
+categoryMeta(category): Maps categories to their corresponding Lucide icons (Wrench, Zap, Wifi, Baby, etc.) and readable labels.
+URGENCY_META: Visual styling (badge colors and indicator dots) for high (red), medium (amber), and low (gray).
+STATUS_META: Indicator dots for post statuses (open, in_progress, resolved).
+timeAgo(iso): Converts ISO timestamps into compact relative times (e.g., "now", "5m", "3h", "2d").
+
+
+lib/use-notify.tsx
+
+Role: Toast notification wrapper.
+
+Exports useNotify(), which wraps Gluestack's useToast.
+Displays top-positioned, 3-second toast notifications with a title and optional description for actions and errors.
+
+
+lib/use-offer-help.ts
+
+Role: Interaction hook for responding to a help request.
+
+Exports useOfferHelp().
+Invokes api.offerHelp(user, postId) to initialize or resume a conversation, navigates to /chat/[id], and triggers a toast message via useNotify if the operation fails.
