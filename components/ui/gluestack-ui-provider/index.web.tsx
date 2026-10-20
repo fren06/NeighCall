@@ -20,15 +20,9 @@ export function GluestackUIProvider({
     script(e.matches ? 'dark' : 'light');
   }, []);
 
+  // Re-apply on every mode change; script() resolves 'system' to the OS setting.
   useSafeLayoutEffect(() => {
-    if (mode !== 'system') {
-      const documentElement = document.documentElement;
-      if (documentElement) {
-        documentElement.classList.add(mode);
-        documentElement.classList.remove(mode === 'light' ? 'dark' : 'light');
-        documentElement.style.colorScheme = mode;
-      }
-    }
+    script(mode);
   }, [mode]);
 
   useSafeLayoutEffect(() => {
@@ -38,7 +32,7 @@ export function GluestackUIProvider({
     media.addListener(handleMediaQuery);
 
     return () => media.removeListener(handleMediaQuery);
-  }, [handleMediaQuery]);
+  }, [mode, handleMediaQuery]);
 
   return (
     <>
