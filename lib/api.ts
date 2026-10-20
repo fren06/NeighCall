@@ -2,18 +2,23 @@
 // mock implementation for Supabase later doesn't touch any UI code.
 import { analyzeText } from '@/lib/mock-ai';
 import * as mock from '@/lib/mock-data';
-import { DEFAULT_NOTIFICATIONS } from '@/types/models';
+import { DEFAULT_NOTIFICATIONS, isStaff } from '@/types/models';
 import type {
   Bulletin,
+  BulletinInput,
   ChatMessage,
   ChatPeer,
   Conversation,
   ConversationSummary,
   Estate,
   FeedPost,
+  ManagementOverview,
   Message,
   NewPostInput,
   PostAnalysis,
+  Report,
+  ReportDetail,
+  ReportStatus,
   ReportTarget,
   SignUpInput,
   User,
@@ -61,6 +66,12 @@ export async function signIn(email: string, password: string): Promise<User> {
     throw new ApiError('Incorrect email or password.');
   }
   return user;
+}
+
+/** Latest copy of a user, e.g. to notice when management has reviewed them. */
+export async function getUser(id: string): Promise<User | undefined> {
+  const user = mock.users.find((u) => u.id === id);
+  return user && { ...user };
 }
 
 export async function updateProfile(
@@ -394,4 +405,211 @@ export async function devSetStatus(
   user.status = status;
   user.admin_note = admin_note;
   return { ...user };
+}
+
+
+// ─── Management (staff only) ──────────────────────────────────────────────
+
+function assertStaff(viewer: User) {
+  if (!isStaff(viewer)) throw new ApiError('Management access only.');
+}
+
+const estateResidents = (viewer: User) =>
+  mock.users.filter((u) => u.role === 'resident' && u.estate_id === viewer.estate_id);
+
+export async function getManagementOverview(viewer: User): Promise<ManagementOverview> {
+  assertStaff(viewer);
+  await delay(250);
+  const residents = estateResidents(viewer);
+  const now = new Date().toISOString();
+  return {
+    pending_residents: residents.filter((u) => u.status === 'pending').length,
+    open_reports: mock.reports.filter((r) => r.status === 'open').length,
+    investigating_reports: mock.reports.filter((r) => r.status === 'investigating').length,
+    active_bulletins: mock.bulletins.filter(
+      (b) => b.estate_id === viewer.estate_id && (!b.pinned_until || b.pinned_until > now)
+    ).length,
+    resident_count: residents.filter((u) => u.status === 'approved').length,
+  };
+}
+
+/** Residents of the staff member's estate, newest registrations first. */
+export async function getResidents(viewer: User): Promise<User[]> {
+  assertStaff(viewer);
+  await delay(300);
+  return estateResidents(viewer)
+    .sort((a, b) => b.created_at.localeCompare(a.created_at))
+    .map((u) => ({ ...u }));
+}
+
+/** Approve, ask for more info, reject, suspend or reinstate a resident. */
+export async function reviewResident(
+  viewer: User,
+  userId: string,
+  status: User['status'],
+  note?: string
+): Promise<User> {
+  assertStaff(viewer);
+  await delay(300);
+  const user = estateResidents(viewer).find((u) => u.id === userId);
+  if (!user) throw new ApiError('Resident not found.');
+  if (status === 'needs_info' && !note?.trim()) {
+    throw new ApiError('Tell the resident what information you need.');
+  }
+  user.status = status;
+  user.admin_note = status === 'approved' ? undefined : note?.trim() || undefined;
+  return { ...user };
+}
+
+function describeTarget(r: Report): { excerpt: string; offenderId?: string; postExists: boolean } {
+  if (r.target_type === 'post') {
+    const post = mock.posts.find((p) => p.id === r.target_id);
+    return post
+      ? { excerpt: post.content, offenderId: post.author_id, postExists: true }
+      : { excerpt: 'This post has been removed.', postExists: false };
+  }
+  if (r.target_type === 'message') {
+    const msg = mock.messages.find((m) => m.id === r.target_id);
+    return msg
+      ? { excerpt: msg.text ?? 'Shared details card', offenderId: msg.sender_id, postExists: false }
+      : { excerpt: 'This message is no longer available.', postExists: false };
+  }
+  const u = mock.users.find((x) => x.id === r.target_id);
+  return { excerpt: u ? `Account: ${u.name}` : 'Unknown account', offenderId: u?.id, postExists: false };
+}
+
+/** Report queue with context. Staff can see who is behind anonymous posts. */
+export async function getReports(viewer: User): Promise<ReportDetail[]> {
+  assertStaff(viewer);
+  await delay(300);
+  return mock.reports
+    .map((report): ReportDetail => {
+      const { excerpt, offenderId, postExists } = describeTarget(report);
+      const offender = mock.users.find((u) => u.id === offenderId);
+      return {
+        report: { ...report },
+        reporter_name: mock.users.find((u) => u.id === report.reporter_id)?.name ?? 'Unknown',
+        target_excerpt: excerpt,
+        offender: offender && {
+          id: offender.id,
+          name: offender.name,
+          block: offender.block,
+          status: offender.status,
+        },
+        post_exists: postExists,
+      };
+    })
+    .sort((a, b) => b.report.created_at.localeCompare(a.report.created_at));
+}
+
+export async function updateReportStatus(
+  viewer: User,
+  reportId: string,
+  status: ReportStatus
+): Promise<void> {
+  assertStaff(viewer);
+  await delay(200);
+  const report = mock.reports.find((r) => r.id === reportId);
+  if (!report) throw new ApiError('Report not found.');
+  report.status = status;
+  report.handled_by = viewer.id;
+}
+
+export type ModerationAction = 'delete_post' | 'warn_user' | 'suspend_user';
+
+/** One-click moderation. Acting on a report also resolves it. */
+export async function moderate(
+  viewer: User,
+  reportId: string,
+  action: ModerationAction
+): Promise<string> {
+  assertStaff(viewer);
+  await delay(300);
+  const report = mock.reports.find((r) => r.id === reportId);
+  if (!report) throw new ApiError('Report not found.');
+  const { offenderId } = describeTarget(report);
+  const offender = estateResidents(viewer).find((u) => u.id === offenderId);
+  let outcome: string;
+
+  if (action === 'delete_post') {
+    const index = mock.posts.findIndex((p) => p.id === report.target_id);
+    if (index < 0) throw new ApiError('That post is already gone.');
+    mock.posts.splice(index, 1);
+    outcome = 'Post deleted';
+  } else {
+    if (!offender) throw new ApiError('No resident account is linked to this report.');
+    if (action === 'warn_user') {
+      offender.warning_count = (offender.warning_count ?? 0) + 1;
+      outcome = `Warning issued to ${offender.name}`;
+    } else {
+      offender.status = 'suspended';
+      offender.admin_note = 'Suspended after a community report.';
+      outcome = `${offender.name} suspended`;
+    }
+  }
+  report.status = 'resolved';
+  report.handled_by = viewer.id;
+  report.resolution_note = outcome;
+  return outcome;
+}
+
+/** Every bulletin for the estate, including expired ones. */
+export async function getAllBulletins(viewer: User): Promise<Bulletin[]> {
+  assertStaff(viewer);
+  await delay(250);
+  return mock.bulletins
+    .filter((b) => b.estate_id === viewer.estate_id)
+    .sort((a, b) => b.created_at.localeCompare(a.created_at))
+    .map((b) => ({ ...b }));
+}
+
+const toMinutes = (hhmm: string) => {
+  const [h, m] = hhmm.split(':').map(Number);
+  return h * 60 + m;
+};
+
+function inQuietHours(user: User, now = new Date()) {
+  const { enabled, start, end } = user.notifications.quiet_hours;
+  if (!enabled) return false;
+  const t = now.getHours() * 60 + now.getMinutes();
+  const [s, e] = [toMinutes(start), toMinutes(end)];
+  return s <= e ? t >= s && t < e : t >= s || t < e;
+}
+
+/**
+ * Publishes a notice. Important notices bypass quiet hours; ordinary ones are
+ * held back for residents who are currently muted. Mock push: counts only.
+ */
+export async function publishBulletin(
+  viewer: User,
+  input: BulletinInput
+): Promise<{ bulletin: Bulletin; notified: number; held_back: number }> {
+  assertStaff(viewer);
+  await delay(500);
+  const title = input.title.trim();
+  const body = input.body.trim();
+  if (!title || !body) throw new ApiError('Add a title and a message.');
+
+  const bulletin: Bulletin = {
+    id: `blt-${Date.now()}`,
+    estate_id: viewer.estate_id,
+    admin_id: viewer.id,
+    title,
+    body,
+    is_high_priority: input.is_high_priority,
+    pinned_until: new Date(Date.now() + input.pin_days * 86_400_000).toISOString(),
+    created_at: new Date().toISOString(),
+  };
+  mock.bulletins.unshift(bulletin);
+
+  const audience = estateResidents(viewer).filter((u) => u.status === 'approved');
+  const held = input.is_high_priority ? [] : audience.filter((u) => inQuietHours(u));
+  return { bulletin, notified: audience.length - held.length, held_back: held.length };
+}
+
+export async function deleteBulletin(viewer: User, bulletinId: string): Promise<void> {
+  assertStaff(viewer);
+  await delay(200);
+  const index = mock.bulletins.findIndex((b) => b.id === bulletinId);
+  if (index >= 0) mock.bulletins.splice(index, 1);
 }

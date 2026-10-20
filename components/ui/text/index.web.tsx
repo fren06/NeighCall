@@ -2,7 +2,11 @@ import React from 'react';
 import type { VariantProps } from '@gluestack-ui/utils/nativewind-utils';
 import { textStyle } from './styles';
 
-type ITextProps = React.ComponentProps<'span'> & VariantProps<typeof textStyle>;
+type ITextProps = React.ComponentProps<'span'> &
+  VariantProps<typeof textStyle> & {
+    /** React Native prop; mapped to a CSS line clamp on web. */
+    numberOfLines?: number;
+  };
 
 const Text = React.forwardRef<React.ComponentRef<'span'>, ITextProps>(
   function Text(
@@ -16,6 +20,8 @@ const Text = React.forwardRef<React.ComponentRef<'span'>, ITextProps>(
       sub,
       italic,
       highlight,
+      numberOfLines,
+      style,
       ...props
     }: { className?: string } & ITextProps,
     ref
@@ -33,6 +39,17 @@ const Text = React.forwardRef<React.ComponentRef<'span'>, ITextProps>(
           highlight: highlight as boolean,
           class: className,
         })}
+        style={
+          numberOfLines
+            ? {
+                display: '-webkit-box',
+                WebkitLineClamp: numberOfLines,
+                WebkitBoxOrient: 'vertical',
+                overflow: 'hidden',
+                ...style,
+              }
+            : style
+        }
         {...props}
         ref={ref}
       />
