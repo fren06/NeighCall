@@ -1,7 +1,7 @@
 import { GluestackUIProvider } from '@/components/ui/gluestack-ui-provider';
 import '@/global.css';
 import { SessionProvider, useSession } from '@/lib/session';
-import { isStaff } from '@/types/models';
+import { isAdmin, isStaff } from '@/types/models';
 import { ThemeModeProvider, useIsDark, useThemeMode } from '@/lib/theme-mode';
 import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
@@ -49,7 +49,8 @@ function RootLayoutNav() {
   const { mode } = useThemeMode();
   const { user } = useSession();
   const status = user?.status;
-  const staff = !!user && isStaff(user);
+  const admin = !!user && isAdmin(user);
+  const staff = !!user && isStaff(user) && !admin;
 
   return (
     <ThemeProvider value={isDark ? DarkTheme : DefaultTheme}>
@@ -67,8 +68,11 @@ function RootLayoutNav() {
             <Stack.Protected guard={!!user && status !== 'approved'}>
               <Stack.Screen name="pending" />
             </Stack.Protected>
-            <Stack.Protected guard={status === 'approved' && !staff}>
+            <Stack.Protected guard={status === 'approved' && !staff && !admin}>
               <Stack.Screen name="(app)" />
+            </Stack.Protected>
+            <Stack.Protected guard={status === 'approved' && admin}>
+              <Stack.Screen name="(admin)" />
             </Stack.Protected>
             <Stack.Protected guard={status === 'approved' && staff}>
               <Stack.Screen name="(management)" />

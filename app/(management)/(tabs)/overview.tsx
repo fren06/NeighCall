@@ -8,7 +8,7 @@ import * as api from '@/lib/api';
 import { useSession } from '@/lib/session';
 import type { Estate, ManagementOverview } from '@/types/models';
 import { router, useFocusEffect, type Href } from 'expo-router';
-import { Flag, LogOut, type LucideIcon, Megaphone, UserCheck, Users } from 'lucide-react-native';
+import { Flag, LogOut, type LucideIcon, Megaphone, Search } from 'lucide-react-native';
 import React, { useCallback, useState } from 'react';
 import { RefreshControl, ScrollView, View } from 'react-native';
 
@@ -101,23 +101,18 @@ export default function Overview() {
 
         <View className="flex-row flex-wrap gap-3">
           <StatCard
-            icon={UserCheck}
-            value={stats?.pending_residents}
-            label="Awaiting approval"
-            hint="New residents to verify"
-            highlight={!!stats?.pending_residents}
-            href={'/residents' as Href}
-          />
-          <StatCard
             icon={Flag}
             value={stats?.open_reports}
             label="Open issues"
-            hint={
-              stats?.investigating_reports
-                ? `${stats.investigating_reports} under investigation`
-                : 'Community reports'
-            }
+            hint="Community reports to look at"
             highlight={!!stats?.open_reports}
+            href={'/issues' as Href}
+          />
+          <StatCard
+            icon={Search}
+            value={stats?.investigating_reports}
+            label="Investigating"
+            hint="Issues in progress"
             href={'/issues' as Href}
           />
           <StatCard
@@ -126,13 +121,6 @@ export default function Overview() {
             label="Active bulletins"
             hint="Pinned for residents"
             href={'/bulletins' as Href}
-          />
-          <StatCard
-            icon={Users}
-            value={stats?.resident_count}
-            label="Approved residents"
-            hint="With full access"
-            href={'/residents' as Href}
           />
         </View>
 
@@ -149,7 +137,7 @@ export default function Overview() {
             Signed in as {user.name}
           </Text>
           <Text size="xs" className="text-muted-foreground">
-            {user.email} · {user.role === 'admin' ? 'Admin' : 'Estate management'}
+            {user.email} · Estate management
           </Text>
         </View>
 

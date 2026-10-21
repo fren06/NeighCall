@@ -2,7 +2,7 @@
 // mock implementation for Supabase later doesn't touch any UI code.
 import { analyzeText } from '@/lib/mock-ai';
 import * as mock from '@/lib/mock-data';
-import { DEFAULT_NOTIFICATIONS, isStaff } from '@/types/models';
+import { DEFAULT_NOTIFICATIONS, isAdmin, isStaff } from '@/types/models';
 import type {
   Bulletin,
   BulletinInput,
@@ -21,6 +21,7 @@ import type {
   ReportStatus,
   ReportTarget,
   SignUpInput,
+  SkillId,
   User,
 } from '@/types/models';
 
@@ -411,7 +412,11 @@ export async function devSetStatus(
 // ─── Management (staff only) ──────────────────────────────────────────────
 
 function assertStaff(viewer: User) {
-  if (!isStaff(viewer)) throw new ApiError('Management access only.');
+  if (!isStaff(viewer)) throw new ApiError('Staff access only.');
+}
+
+function assertAdmin(viewer: User) {
+  if (!isAdmin(viewer)) throw new ApiError('Admin access only.');
 }
 
 const estateResidents = (viewer: User) =>
@@ -435,7 +440,7 @@ export async function getManagementOverview(viewer: User): Promise<ManagementOve
 
 /** Residents of the staff member's estate, newest registrations first. */
 export async function getResidents(viewer: User): Promise<User[]> {
-  assertStaff(viewer);
+  assertAdmin(viewer);
   await delay(300);
   return estateResidents(viewer)
     .sort((a, b) => b.created_at.localeCompare(a.created_at))
@@ -449,7 +454,7 @@ export async function reviewResident(
   status: User['status'],
   note?: string
 ): Promise<User> {
-  assertStaff(viewer);
+  assertAdmin(viewer);
   await delay(300);
   const user = estateResidents(viewer).find((u) => u.id === userId);
   if (!user) throw new ApiError('Resident not found.');
@@ -612,4 +617,133 @@ export async function deleteBulletin(viewer: User, bulletinId: string): Promise<
   await delay(200);
   const index = mock.bulletins.findIndex((b) => b.id === bulletinId);
   if (index >= 0) mock.bulletins.splice(index, 1);
+}
+
+
+// ─── Admin (user list management) ─────────────────────────────────────────
+
+export interface AdminOverview {
+  pending: number;
+  approved: number;
+  restricted: number;
+  open_reports: number;
+  investigating_reports: number;
+}
+
+export async function getAdminOverview(viewer: User): Promise<AdminOverview> {
+  assertAdmin(viewer);
+  await delay(250);
+  const residents = estateResidents(viewer);
+  const count = (...s: User['status'][]) => residents.filter((u) => s.includes(u.status)).length;
+  return {
+    pending: count('pending', 'needs_info'),
+    approved: count('approved'),
+    restricted: count('rejected', 'suspended'),
+    open_reports: mock.reports.filter((r) => r.status === 'open').length,
+    investigating_reports: mock.reports.filter((r) => r.status === 'investigating').length,
+  };
+}
+
+export interface AdminUserInput {
+  name: string;
+  email: string;
+  phone: string;
+  block: string;
+  unit_number: string;
+  street: string;
+  skills: SkillId[];
+}
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function validateAdminUser(input: AdminUserInput) {
+  if (!input.name.trim()) throw new ApiError('Enter the resident’s name.');
+  if (!EMAIL_RE.test(input.email.trim())) throw new ApiError('Enter a valid email address.');
+  if (input.phone.replace(/\D/g, '').length < 9) throw new ApiError('Enter a valid phone number.');
+  if (!input.block.trim() || !input.unit_number.trim() || !input.street.trim()) {
+    throw new ApiError('Block, unit number and street are required.');
+  }
+}
+
+const cleanUserInput = (input: AdminUserInput): AdminUserInput => ({
+  ...input,
+  name: input.name.trim(),
+  email: input.email.trim().toLowerCase(),
+  phone: input.phone.trim(),
+  block: input.block.trim(),
+  unit_number: input.unit_number.trim(),
+  street: input.street.trim(),
+});
+
+/** Adds a resident directly. They are pre-verified, so they start approved. */
+export async function adminCreateUser(
+  viewer: User,
+  input: AdminUserInput & { password: string }
+): Promise<User> {
+  assertAdmin(viewer);
+  await delay(400);
+  validateAdminUser(input);
+  if (input.password.length < 8) throw new ApiError('Use a password of at least 8 characters.');
+  const data = cleanUserInput(input);
+  if (mock.users.some((u) => u.email === data.email)) {
+    throw new ApiError('An account with this email already exists.');
+  }
+  const user: User = {
+    ...data,
+    estate_id: viewer.estate_id,
+    notifications: DEFAULT_NOTIFICATIONS,
+    id: `usr-${Date.now()}`,
+    role: 'resident',
+    status: 'approved',
+    created_at: new Date().toISOString(),
+  };
+  mock.users.push(user);
+  mock.passwords[data.email] = input.password;
+  return { ...user };
+}
+
+/** Edits a resident's profile details (not their role, status or password). */
+export async function adminUpdateUser(
+  viewer: User,
+  userId: string,
+  input: AdminUserInput
+): Promise<User> {
+  assertAdmin(viewer);
+  await delay(300);
+  const user = estateResidents(viewer).find((u) => u.id === userId);
+  if (!user) throw new ApiError('Resident not found.');
+  validateAdminUser(input);
+  const data = cleanUserInput(input);
+  if (data.email !== user.email) {
+    if (mock.users.some((u) => u.email === data.email)) {
+      throw new ApiError('Another account already uses this email.');
+    }
+    // Keep the mock sign-in credentials attached to the new email.
+    mock.passwords[data.email] = mock.passwords[user.email];
+    delete mock.passwords[user.email];
+  }
+  Object.assign(user, data);
+  return { ...user };
+}
+
+/** Permanently removes a resident along with their posts and chats. */
+export async function adminDeleteUser(viewer: User, userId: string): Promise<void> {
+  assertAdmin(viewer);
+  await delay(300);
+  const user = estateResidents(viewer).find((u) => u.id === userId);
+  if (!user) throw new ApiError('Resident not found.');
+
+  const gone = new Set(
+    mock.conversations
+      .filter((c) => c.requester_id === userId || c.helper_id === userId)
+      .map((c) => c.id)
+  );
+  const keep = <T>(list: T[], pred: (item: T) => boolean) => {
+    for (let i = list.length - 1; i >= 0; i--) if (!pred(list[i])) list.splice(i, 1);
+  };
+  keep(mock.messages, (m) => !gone.has(m.conversation_id));
+  keep(mock.conversations, (c) => !gone.has(c.id));
+  keep(mock.posts, (p) => p.author_id !== userId);
+  keep(mock.users, (u) => u.id !== userId);
+  delete mock.passwords[user.email];
 }

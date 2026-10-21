@@ -1,5 +1,5 @@
 import { FilterChips, Pill } from '@/components/management/Chips';
-import { Button, ButtonSpinner, ButtonText } from '@/components/ui/button';
+import { Button, ButtonIcon, ButtonSpinner, ButtonText } from '@/components/ui/button';
 import { Heading } from '@/components/ui/heading';
 import { Pressable } from '@/components/ui/pressable';
 import { SafeAreaView } from '@/components/ui/safe-area-view';
@@ -10,7 +10,8 @@ import { useSession } from '@/lib/session';
 import { timeAgo } from '@/lib/post-meta';
 import { useNotify } from '@/lib/use-notify';
 import { SKILLS, type User, type UserStatus } from '@/types/models';
-import { useFocusEffect } from 'expo-router';
+import { router, useFocusEffect, type Href } from 'expo-router';
+import { Pencil, Trash2, UserPlus } from 'lucide-react-native';
 import React, { useCallback, useMemo, useState } from 'react';
 import { FlatList, RefreshControl, View } from 'react-native';
 
@@ -26,12 +27,22 @@ const STATUS_PILL: Record<UserStatus, { label: string; tone: 'neutral' | 'good' 
 
 const skillLabel = (id: string) => SKILLS.find((s) => s.id === id)?.label ?? id;
 
-function ResidentCard({ resident, onChange }: { resident: User; onChange: (u: User) => void }) {
+function ResidentCard({
+  resident,
+  onChange,
+  onDeleted,
+}: {
+  resident: User;
+  onChange: (u: User) => void;
+  onDeleted: (id: string) => void;
+}) {
   const { user: staff } = useSession();
   const notify = useNotify();
   const [open, setOpen] = useState(false);
   const [note, setNote] = useState(resident.admin_note ?? '');
   const [busy, setBusy] = useState<UserStatus>();
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const pill = STATUS_PILL[resident.status];
 
   const act = async (status: UserStatus, done: string) => {
@@ -46,6 +57,24 @@ function ResidentCard({ resident, onChange }: { resident: User; onChange: (u: Us
       notify("Couldn't update", (e as Error).message);
     } finally {
       setBusy(undefined);
+    }
+  };
+
+  const remove = async () => {
+    if (!staff) return;
+    if (!confirmDelete) {
+      setConfirmDelete(true);
+      return;
+    }
+    setDeleting(true);
+    try {
+      await api.adminDeleteUser(staff, resident.id);
+      notify('Resident deleted', resident.name);
+      onDeleted(resident.id);
+    } catch (e) {
+      notify("Couldn't delete", (e as Error).message);
+      setDeleting(false);
+      setConfirmDelete(false);
     }
   };
 
@@ -128,13 +157,36 @@ function ResidentCard({ resident, onChange }: { resident: User; onChange: (u: Us
             {(s === 'rejected' || s === 'suspended') &&
               actionButton('approved', 'Approve / reinstate', 'Resident approved', 'brand')}
           </View>
+          <View className="flex-row gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              className="flex-1"
+              onPress={() =>
+                router.push({ pathname: '/user-form', params: { id: resident.id } } as Href)
+              }
+            >
+              <ButtonIcon as={Pencil} />
+              <ButtonText>Edit details</ButtonText>
+            </Button>
+            <Button
+              size="sm"
+              variant={confirmDelete ? 'destructive' : 'ghost'}
+              className="flex-1"
+              isDisabled={deleting}
+              onPress={remove}
+            >
+              {deleting ? <ButtonSpinner /> : <ButtonIcon as={Trash2} />}
+              <ButtonText>{confirmDelete ? 'Tap again to delete' : 'Delete'}</ButtonText>
+            </Button>
+          </View>
         </View>
       )}
     </View>
   );
 }
 
-export default function Residents() {
+export default function Users() {
   const { user } = useSession();
   const [residents, setResidents] = useState<User[]>();
   const [filter, setFilter] = useState<Filter>('pending');
@@ -159,6 +211,8 @@ export default function Residents() {
     };
   }, [residents]);
 
+  const drop = (id: string) => setResidents((list) => list?.filter((r) => r.id !== id));
+
   const replace = (u: User) =>
     setResidents((list) => list?.map((r) => (r.id === u.id ? u : r)));
 
@@ -167,11 +221,19 @@ export default function Residents() {
       <FlatList
         data={residents ? groups[filter] : []}
         keyExtractor={(r) => r.id}
-        renderItem={({ item }) => <ResidentCard resident={item} onChange={replace} />}
+        renderItem={({ item }) => (
+          <ResidentCard resident={item} onChange={replace} onDeleted={drop} />
+        )}
         ItemSeparatorComponent={() => <View className="h-3" />}
         ListHeaderComponent={
           <View className="gap-4 pb-4 pt-4">
-            <Heading size="2xl">Residents</Heading>
+            <View className="flex-row items-center justify-between gap-3">
+              <Heading size="2xl">Users</Heading>
+              <Button variant="brand" size="sm" onPress={() => router.push('/user-form' as Href)}>
+                <ButtonIcon as={UserPlus} />
+                <ButtonText>Add resident</ButtonText>
+              </Button>
+            </View>
             <FilterChips
               value={filter}
               onChange={setFilter}

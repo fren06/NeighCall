@@ -74,6 +74,7 @@ export interface User extends Address {
 
 /** Admins and estate management share the same staff tools. */
 export const isStaff = (user: Pick<User, 'role'>) => user.role !== 'resident';
+export const isAdmin = (user: Pick<User, 'role'>) => user.role === 'admin';
 
 // ─── Skills ───────────────────────────────────────────────────────────────
 

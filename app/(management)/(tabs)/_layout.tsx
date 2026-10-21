@@ -1,7 +1,7 @@
 import { palette } from '@/lib/theme';
 import { useIsDark } from '@/lib/theme-mode';
 import { Tabs } from 'expo-router/js-tabs';
-import { Flag, LayoutDashboard, Megaphone, Users } from 'lucide-react-native';
+import { Flag, LayoutDashboard, Megaphone } from 'lucide-react-native';
 import React from 'react';
 
 export default function ManagementTabs() {
@@ -25,13 +25,6 @@ export default function ManagementTabs() {
         options={{
           title: 'Overview',
           tabBarIcon: ({ color, size }) => <LayoutDashboard color={color} size={size} />,
-        }}
-      />
-      <Tabs.Screen
-        name="residents"
-        options={{
-          title: 'Residents',
-          tabBarIcon: ({ color, size }) => <Users color={color} size={size} />,
         }}
       />
       <Tabs.Screen
