@@ -69,9 +69,67 @@ export const users: User[] = [
   ),
 ];
 
+// Staff plus a couple of pending residents so the management tools have work to do.
+users.push(
+  {
+    id: 'usr-mgr',
+    estate_id: 'est-1',
+    name: 'Nadia Kamal',
+    email: 'manager@example.com',
+    phone: '+60 3-4021 0000',
+    block: 'Office',
+    unit_number: 'G-01',
+    street: 'Jalan Melati 3',
+    skills: [],
+    notifications: DEFAULT_NOTIFICATIONS,
+    role: 'management',
+    status: 'approved',
+    created_at: hoursAgo(24 * 90),
+  },
+  {
+    id: 'usr-admin',
+    estate_id: 'est-1',
+    name: 'Imran Yusof',
+    email: 'admin@example.com',
+    phone: '+60 3-4021 0001',
+    block: 'Office',
+    unit_number: 'G-02',
+    street: 'Jalan Melati 3',
+    skills: [],
+    notifications: DEFAULT_NOTIFICATIONS,
+    role: 'admin',
+    status: 'approved',
+    created_at: hoursAgo(24 * 120),
+  },
+  ...(
+    [
+      ['usr-nora', 'Nora Hassan', 'E', '03-05'],
+      ['usr-kevin', 'Kevin Ong', 'F', '10-12'],
+    ] as const
+  ).map(
+    ([id, name, block, unit_number], i): User => ({
+      id,
+      estate_id: 'est-1',
+      name,
+      email: `${id.slice(4)}@example.com`,
+      phone: `+60 11-555 55${i}${i}`,
+      block,
+      unit_number,
+      street: 'Jalan Melati 3',
+      skills: [],
+      notifications: DEFAULT_NOTIFICATIONS,
+      role: 'resident',
+      status: 'pending',
+      created_at: hoursAgo(2 + i * 6),
+    })
+  )
+);
+
 /** Demo passwords for mock sign-in, keyed by email. */
 export const passwords: Record<string, string> = {
   'aisyah@example.com': 'password',
+  'manager@example.com': 'password',
+  'admin@example.com': 'password',
 };
 
 export const posts: StoredPost[] = [
@@ -166,7 +224,7 @@ export const bulletins: Bulletin[] = [
   {
     id: 'blt-1',
     estate_id: 'est-1',
-    admin_id: 'adm-1',
+    admin_id: 'usr-mgr',
     title: 'Water maintenance on Thursday',
     body: 'Water supply to Blocks A–D will be cut from 10am to 4pm on Thursday for tank cleaning. Please store water in advance.',
     is_high_priority: true,
@@ -175,7 +233,35 @@ export const bulletins: Bulletin[] = [
   },
 ];
 
-export const reports: Report[] = [];
+export const reports: Report[] = [
+  {
+    id: 'rpt-1',
+    reporter_id: 'usr-priya',
+    target_type: 'post',
+    target_id: 'pst-2',
+    reason: 'Looks like spam, not a genuine request',
+    status: 'open',
+    created_at: hoursAgo(1),
+  },
+  {
+    id: 'rpt-2',
+    reporter_id: 'usr-1',
+    target_type: 'user',
+    target_id: 'usr-hafiz',
+    reason: 'Was rude to me in chat',
+    status: 'investigating',
+    created_at: hoursAgo(8),
+  },
+  {
+    id: 'rpt-3',
+    reporter_id: 'usr-daniel',
+    target_type: 'message',
+    target_id: 'msg-2',
+    reason: 'Inappropriate message',
+    status: 'open',
+    created_at: hoursAgo(12),
+  },
+];
 
 // Hafiz offered to help with Aisyah's anonymous ladder post (pst-4), so the
 // "Share My Details" flow can be tried from the requester's side.

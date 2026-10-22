@@ -15,11 +15,11 @@ import { useSession } from '@/lib/session';
 import { palette } from '@/lib/theme';
 import { useIsDark, useThemeMode } from '@/lib/theme-mode';
 import { useNotify } from '@/lib/use-notify';
-import { SKILLS, type Estate, type NotificationPrefs } from '@/types/models';
+import { skillLabel, type Estate, type NotificationPrefs } from '@/types/models';
 import { router } from 'expo-router';
-import { LogOut, Pencil, ShieldCheck } from 'lucide-react-native';
+import { LogOut, Pencil, ShieldCheck, Trash2 } from 'lucide-react-native';
 import React, { useEffect, useState } from 'react';
-import { View } from 'react-native';
+import { Alert, Platform, View } from 'react-native';
 
 const THEME_OPTIONS: { id: ModeType; label: string }[] = [
   { id: 'system', label: 'System' },
@@ -28,7 +28,7 @@ const THEME_OPTIONS: { id: ModeType; label: string }[] = [
 ];
 
 export default function Profile() {
-  const { user, setUser, signOut } = useSession();
+  const { user, setUser, signOut, deleteAccount } = useSession();
   const { mode, setMode } = useThemeMode();
   const colors = palette[useIsDark() ? 'dark' : 'light'];
   const notify = useNotify();
@@ -39,7 +39,28 @@ export default function Profile() {
   }, [user?.estate_id]);
 
   if (!user) return null;
-  const skills = SKILLS.filter((s) => (user.skills as string[]).includes(s.id));
+
+  const removeAccount = async () => {
+    try {
+      await deleteAccount();
+    } catch (e) {
+      notify("Couldn't delete account", (e as Error).message);
+    }
+  };
+  const confirmDelete = () => {
+    const msg = 'This permanently deletes your account, requests and chats. It cannot be undone.';
+    if (Platform.OS === 'web') {
+      if (window.confirm(`Delete your account?
+
+${msg}`)) removeAccount();
+      return;
+    }
+    Alert.alert('Delete your account?', msg, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: removeAccount },
+    ]);
+  };
+  const skills = user.skills.map((id) => ({ id, label: skillLabel(id) }));
   const prefs = user.notifications;
 
   // Settings toggles apply immediately; roll back if the save fails.
@@ -185,6 +206,10 @@ export default function Profile() {
         <Button variant="outline" onPress={signOut}>
           <ButtonIcon as={LogOut} />
           <ButtonText>Sign out</ButtonText>
+        </Button>
+        <Button variant="link" onPress={confirmDelete}>
+          <ButtonIcon as={Trash2} className="text-destructive" />
+          <ButtonText className="text-destructive">Delete my account</ButtonText>
         </Button>
       </ScrollView>
     </SafeAreaView>

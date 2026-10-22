@@ -61,14 +61,21 @@ export interface User extends Address {
   name: string;
   email: string;
   phone: string;
-  skills: SkillId[];
+  /** Known skill ids, or free text the user entered under "Other". */
+  skills: string[];
   notifications: NotificationPrefs;
   role: UserRole;
   status: UserStatus;
   /** Message from the admin when status is needs_info / rejected. */
   admin_note?: string;
+  /** Formal warnings issued by management after upheld reports. */
+  warning_count?: number;
   created_at: Timestamp;
 }
+
+/** Admins and estate management share the same staff tools. */
+export const isStaff = (user: Pick<User, 'role'>) => user.role !== 'resident';
+export const isAdmin = (user: Pick<User, 'role'>) => user.role === 'admin';
 
 // ─── Skills ───────────────────────────────────────────────────────────────
 
@@ -88,6 +95,9 @@ export const SKILLS = [
 ] as const;
 
 export type SkillId = (typeof SKILLS)[number]['id'];
+
+/** Display label: known skills use their label, custom ones show as typed. */
+export const skillLabel = (skill: string) => SKILLS.find((s) => s.id === skill)?.label ?? skill;
 
 // ─── Posts ────────────────────────────────────────────────────────────────
 
@@ -216,7 +226,38 @@ export interface Report {
   target_id: ID;
   reason: string;
   status: ReportStatus;
+  /** Staff note recorded when the report is resolved. */
+  resolution_note?: string;
+  handled_by?: ID;
   created_at: Timestamp;
+}
+
+/** A report plus the context management needs to act on it. */
+export interface ReportDetail {
+  report: Report;
+  reporter_name: string;
+  /** What was reported, e.g. the post text, chat message or user's name. */
+  target_excerpt: string;
+  /** Author/sender/user behind the target; staff can see through anonymity. */
+  offender?: { id: ID; name: string; block: string; status: UserStatus };
+  /** The reported post still exists and can be removed. */
+  post_exists: boolean;
+}
+
+export interface BulletinInput {
+  title: string;
+  body: string;
+  is_high_priority: boolean;
+  /** How long it stays pinned on residents' feeds. */
+  pin_days: number;
+}
+
+export interface ManagementOverview {
+  pending_residents: number;
+  open_reports: number;
+  investigating_reports: number;
+  active_bulletins: number;
+  resident_count: number;
 }
 
 // ─── Auth inputs ──────────────────────────────────────────────────────────
@@ -227,5 +268,5 @@ export interface SignUpInput extends Address {
   email: string;
   phone: string;
   password: string;
-  skills: SkillId[];
+  skills: string[];
 }

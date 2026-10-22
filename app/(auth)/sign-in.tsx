@@ -58,6 +58,9 @@ export default function SignIn() {
           {busy && <ButtonSpinner />}
           <ButtonText>Sign in</ButtonText>
         </Button>
+        <Button variant="link" onPress={() => router.push('/forgot-password')}>
+          <ButtonText>Forgot password?</ButtonText>
+        </Button>
         <Button variant="link" onPress={() => router.replace('/sign-up')}>
           <ButtonText>New here? Create an account</ButtonText>
         </Button>

@@ -53,6 +53,21 @@ export default function Pending() {
     if (user) api.getEstate(user.estate_id).then(setEstate);
   }, [user?.estate_id]);
 
+  // Pick up decisions made by management (approve, request info, ...).
+  const userId = user?.id;
+  const knownStatus = user?.status;
+  const knownNote = user?.admin_note;
+  useEffect(() => {
+    if (!userId) return;
+    const timer = setInterval(async () => {
+      const latest = await api.getUser(userId);
+      if (latest && (latest.status !== knownStatus || latest.admin_note !== knownNote)) {
+        setUser(latest);
+      }
+    }, 3000);
+    return () => clearInterval(timer);
+  }, [userId, knownStatus, knownNote, setUser]);
+
   if (!user || user.status === 'approved') return null;
   const copy = COPY[user.status];
 
