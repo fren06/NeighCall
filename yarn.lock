@@ -1518,11 +1518,6 @@
   resolved "https://registry.npmjs.org/@legendapp/tools/-/tools-2.0.1.tgz"
   integrity sha512-Kxt0HWvWElRK6oybHRzcYxdgaKGwuaiRNreS7usW7QuHXRIHaH4yMcW2YNRG4DHE5fpefv+Bno/BohQcCE4FaA==
 
-"@msgpackr-extract/msgpackr-extract-win32-x64@3.0.3":
-  version "3.0.3"
-  resolved "https://registry.npmjs.org/@msgpackr-extract/msgpackr-extract-win32-x64/-/msgpackr-extract-win32-x64-3.0.3.tgz"
-  integrity sha512-x0fWaQtYp4E6sktbsdAqnehxDgEc/VwM7uLsRCYWaiGu0ykYdZPiS8zCWdnjHwyiumousxfBm4SO31eXqwEZhQ==
-
 "@openrouter/ai-sdk-provider@^2.3.3":
   version "2.9.0"
   resolved "https://registry.npmjs.org/@openrouter/ai-sdk-provider/-/ai-sdk-provider-2.9.0.tgz"
@@ -3439,7 +3434,7 @@ destroy@1.2.0:
   resolved "https://registry.npmjs.org/destroy/-/destroy-1.2.0.tgz"
   integrity sha512-2sJGJTaXIIaR1w4iJSNoN0hnMY7Gpc/n8D4qSCJw8QqFWXf7cuAgnEHxBpweaVcPevC2l3KpjYCx3NypQQgaJg==
 
-detect-libc@^2.0.1, detect-libc@^2.0.3:
+detect-libc@^2.0.3:
   version "2.1.2"
   resolved "https://registry.npmjs.org/detect-libc/-/detect-libc-2.1.2.tgz"
   integrity sha512-Btj2BOOO83o3WyH59e8MgXsxEQVcarkUOpEYrubB0urwnN10yQ364rsiByU11nZlqWYZm05i/of7io4mzihBtQ==
@@ -5484,20 +5479,6 @@ ms@2.0.0:
   resolved "https://registry.npmjs.org/ms/-/ms-2.0.0.tgz"
   integrity sha512-Tpp60P6IUJDTuOq/5Z8cdskzJujfwqfOTkrwIwj7IRISpnkJnT6SyJ4PCPnGMoFjC9ddhal5KVIYtAt97ix05A==
 
-msgpackr-extract@^3.0.2:
-  version "3.0.3"
-  resolved "https://registry.npmjs.org/msgpackr-extract/-/msgpackr-extract-3.0.3.tgz"
-  integrity sha512-P0efT1C9jIdVRefqjzOQ9Xml57zpOXnIuS+csaB4MdZbTdmGDLo8XhzBG1N7aO11gKDDkJvBLULeFTo46wwreA==
-  dependencies:
-    node-gyp-build-optional-packages "5.2.2"
-  optionalDependencies:
-    "@msgpackr-extract/msgpackr-extract-darwin-arm64" "3.0.3"
-    "@msgpackr-extract/msgpackr-extract-darwin-x64" "3.0.3"
-    "@msgpackr-extract/msgpackr-extract-linux-arm" "3.0.3"
-    "@msgpackr-extract/msgpackr-extract-linux-arm64" "3.0.3"
-    "@msgpackr-extract/msgpackr-extract-linux-x64" "3.0.3"
-    "@msgpackr-extract/msgpackr-extract-win32-x64" "3.0.3"
-
 msgpackr@^2.0.1:
   version "2.0.1"
   resolved "https://registry.npmjs.org/msgpackr/-/msgpackr-2.0.1.tgz"
@@ -5553,13 +5534,6 @@ node-forge@^1.3.3:
   version "1.4.0"
   resolved "https://registry.npmjs.org/node-forge/-/node-forge-1.4.0.tgz"
   integrity sha512-LarFH0+6VfriEhqMMcLX2F7SwSXeWwnEAJEsYm5QKWchiVYVvJyV9v7UDvUv+w5HO23ZpQTXDv/GxdDdMyOuoQ==
-
-node-gyp-build-optional-packages@5.2.2:
-  version "5.2.2"
-  resolved "https://registry.npmjs.org/node-gyp-build-optional-packages/-/node-gyp-build-optional-packages-5.2.2.tgz"
-  integrity sha512-s+w+rBWnpTMwSFbaE0UXsRlg7hU4FjekKU4eyAih5T8nJuNZT1nNsskXpxmeqSK9UzkBl6UgRlnKc8hz8IEqOw==
-  dependencies:
-    detect-libc "^2.0.1"
 
 node-int64@^0.4.0:
   version "0.4.0"

@@ -2,6 +2,7 @@
 // backed by Supabase. Only the AI analysis is still a local stand-in.
 import { analyzeText } from '@/lib/mock-ai';
 import { supabase } from '@/lib/supabase';
+import type { AuthChangeEvent } from '@supabase/supabase-js';
 import { isAdmin, isStaff } from '@/types/models';
 import type {
   Bulletin,
@@ -36,11 +37,12 @@ function check<T>({ data, error }: { data: T; error: { message: string } | null 
 const USER_COLUMNS =
   'id, estate_id, name, email, phone, block, unit_number, street, skills, notifications, role, status, admin_note, warning_count, created_at';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const toUser = (row: any): User => ({ ...row, admin_note: row.admin_note ?? undefined });
+type UserRow = Omit<User, 'admin_note'> & { admin_note?: string | null };
+
+const toUser = (row: UserRow): User => ({ ...row, admin_note: row.admin_note ?? undefined });
 
 async function fetchProfile(id: string): Promise<User> {
-  const row = check(await supabase.from('users').select(USER_COLUMNS).eq('id', id).maybeSingle());
+  const row = check(await supabase.from('users').select(USER_COLUMNS).eq('id', id).maybeSingle()) as UserRow | null;
   if (!row) throw new ApiError('No NeighCall profile was found for this account.');
   return toUser(row);
 }
@@ -108,7 +110,7 @@ export async function restoreSession(): Promise<User | null> {
 
 /** Calls back when the login ends elsewhere (expired, or signed out on another tab). */
 export function onSignedOut(callback: () => void) {
-  const { data } = supabase.auth.onAuthStateChange((event) => {
+  const { data } = supabase.auth.onAuthStateChange((event: AuthChangeEvent) => {
     if (event === 'SIGNED_OUT') callback();
   });
   return () => data.subscription.unsubscribe();
@@ -123,7 +125,7 @@ export async function requestPasswordReset(email: string): Promise<void> {
 
 /** Latest copy of a user, e.g. to notice when management has reviewed them. */
 export async function getUser(id: string): Promise<User | undefined> {
-  const row = check(await supabase.from('users').select(USER_COLUMNS).eq('id', id).maybeSingle());
+  const row = check(await supabase.from('users').select(USER_COLUMNS).eq('id', id).maybeSingle()) as UserRow | null;
   return row ? toUser(row) : undefined;
 }
 
@@ -138,7 +140,7 @@ export async function updateProfile(userId: string, changes: ProfileChanges): Pr
   const status = current.status === 'needs_info' ? 'pending' : current.status;
   const row = check(
     await supabase.from('users').update({ ...changes, status }).eq('id', userId).select(USER_COLUMNS).single()
-  );
+  ) as UserRow;
   return toUser(row);
 }
 
@@ -272,13 +274,15 @@ export async function updatePostStatus(
 ): Promise<void> {
   const rows = check(
     await supabase.from('posts').update({ status }).eq('id', postId).select('id')
-  );
+  ) as { id: string }[] | null;
   if (!rows?.length) throw new ApiError('You can only update your own requests.');
 }
 
 /** Author-only: removes the request; its chats are deleted with it. */
 export async function deletePost(_viewer: User, postId: string): Promise<void> {
-  const rows = check(await supabase.from('posts').delete().eq('id', postId).select('id'));
+  const rows = check(
+    await supabase.from('posts').delete().eq('id', postId).select('id')
+  ) as { id: string }[] | null;
   if (!rows?.length) throw new ApiError('You can only delete your own requests.');
 }
 
@@ -375,7 +379,7 @@ export async function updatePreferences(
 ): Promise<User> {
   const row = check(
     await supabase.from('users').update(changes).eq('id', userId).select(USER_COLUMNS).single()
-  );
+  ) as UserRow;
   return toUser(row);
 }
 
@@ -441,7 +445,7 @@ export async function getResidents(viewer: User): Promise<User[]> {
       .eq('estate_id', viewer.estate_id)
       .neq('role', 'admin')
       .order('created_at', { ascending: false })
-  );
+  ) as UserRow[] | null;
   return (rows ?? []).map(toUser);
 }
 
@@ -464,7 +468,7 @@ export async function reviewResident(
       .eq('id', userId)
       .select(USER_COLUMNS)
       .maybeSingle()
-  );
+  ) as UserRow | null;
   if (!row) throw new ApiError('User not found.');
   return toUser(row);
 }
@@ -655,7 +659,7 @@ export async function adminUpdateUser(
   const { email, ...details } = cleanUserInput(input);
   const current = check(
     await supabase.from('users').select('email').eq('id', userId).maybeSingle()
-  );
+  ) as { email: string } | null;
   if (!current) throw new ApiError('User not found.');
   // The email is also the login, which only the server (secret key) can change.
   if (current.email !== email) {
@@ -668,7 +672,7 @@ export async function adminUpdateUser(
       .eq('id', userId)
       .select(USER_COLUMNS)
       .maybeSingle()
-  );
+  ) as UserRow | null;
   if (!row) throw new ApiError('User not found.');
   return toUser(row);
 }
