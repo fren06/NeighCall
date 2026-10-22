@@ -5,14 +5,17 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createClient } from '@supabase/supabase-js';
 import { AppState, Platform } from 'react-native';
 
-const url = process.env.EXPO_PUBLIC_SUPABASE_URL;
+const rawUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
 const key = process.env.EXPO_PUBLIC_SUPABASE_KEY;
 
-if (!url || !key) {
+if (!rawUrl || !key) {
   throw new Error(
     'Missing Supabase settings. Copy .env.example to .env.local, fill it in, then restart `expo start`.'
   );
 }
+
+// Strip any trailing slashes or /rest/v1 paths if pasted from the API URL settings.
+const url = rawUrl.replace(/\/rest\/v1\/?$/, '').replace(/\/+$/, '');
 
 // Web pages are also rendered on the server, where there is no browser
 // storage; the session only needs to persist in the real app/browser.
