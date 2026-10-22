@@ -23,7 +23,9 @@ export default function PostDetail() {
   const [post, setPost] = useState<FeedPost | null>();
 
   useEffect(() => {
-    if (user && id) api.getPost(user, id).then((p) => setPost(p ?? null));
+    if (!user || !id) return;
+    api.getPost(user, id).then((p) => setPost(p ?? null));
+    api.markNotificationsRead(`/post/${id}`).catch(() => {});
   }, [user, id]);
 
   const setStatus = async (status: 'open' | 'in_progress' | 'resolved') => {

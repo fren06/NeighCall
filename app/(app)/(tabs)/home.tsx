@@ -8,6 +8,7 @@ import { Pressable } from '@/components/ui/pressable';
 import { SafeAreaView } from '@/components/ui/safe-area-view';
 import { Text } from '@/components/ui/text';
 import * as api from '@/lib/api';
+import { useInbox } from '@/lib/inbox';
 import { useSession } from '@/lib/session';
 import { useNotify } from '@/lib/use-notify';
 import { useOfferHelp } from '@/lib/use-offer-help';
@@ -53,6 +54,7 @@ export default function Home() {
   const { user } = useSession();
   const notify = useNotify();
   const offerHelp = useOfferHelp();
+  const { unread } = useInbox();
   const [estate, setEstate] = useState<Estate>();
   const [posts, setPosts] = useState<FeedPost[]>();
   const [bulletins, setBulletins] = useState<Bulletin[]>([]);
@@ -73,11 +75,13 @@ export default function Home() {
     if (user) api.getEstate(user.estate_id).then(setEstate);
   }, [user?.estate_id]);
 
-  // Reload whenever the tab regains focus, e.g. after creating a post.
+  // Reload whenever the tab regains focus, e.g. after creating a post, and
+  // live while it's open when neighbours post, offer help or resolve.
   useFocusEffect(
     useCallback(() => {
       load();
-    }, [load])
+      return user ? api.subscribeToFeed(user.estate_id, load) : undefined;
+    }, [load, user?.estate_id])
   );
 
   const refresh = async () => {
@@ -113,11 +117,18 @@ export default function Home() {
           </Heading>
         </View>
         <Pressable
-          accessibilityLabel="Notifications"
+          accessibilityLabel={unread > 0 ? `Notifications, ${unread} unread` : 'Notifications'}
           className="h-10 w-10 items-center justify-center rounded-full bg-secondary"
-          onPress={() => notify('No new notifications')}
+          onPress={() => router.push('/notifications')}
         >
           <Icon as={Bell} size="md" className="text-foreground" />
+          {unread > 0 && (
+            <View className="absolute -right-1 -top-1 h-5 min-w-5 items-center justify-center rounded-full border-2 border-background bg-destructive px-1">
+              <Text className="text-[10px] font-bold leading-3 text-white">
+                {unread > 9 ? '9+' : unread}
+              </Text>
+            </View>
+          )}
         </Pressable>
       </View>
 

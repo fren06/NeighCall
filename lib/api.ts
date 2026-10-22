@@ -5,6 +5,7 @@ import { supabase } from '@/lib/supabase';
 import type { AuthChangeEvent } from '@supabase/supabase-js';
 import { isAdmin, isStaff } from '@/types/models';
 import type {
+  AppNotification,
   Bulletin,
   BulletinInput,
   ChatMessage,
@@ -396,6 +397,67 @@ export async function createReport(
  * server sends an empty "changed" ping on channel `chat:<id>`; the screen
  * then refetches through getConversation.
  */
+/**
+ * Calls back when a request, offer of help or bulletin in the estate changes
+ * (a content-free ping from the ping_feed trigger). Bursts of changes, like
+ * a moderator clearing several posts, are combined into one call.
+ */
+export function subscribeToFeed(estateId: string, onChange: () => void) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const channel = supabase
+    .channel(`feed:${estateId}`)
+    .on('broadcast', { event: 'changed' }, () => {
+      clearTimeout(timer);
+      timer = setTimeout(onChange, 300);
+    })
+    .subscribe();
+  return () => {
+    clearTimeout(timer);
+    void supabase.removeChannel(channel);
+  };
+}
+
+// ─── Notifications (in-app inbox) ─────────────────────────────────────────
+
+/** The signed-in user's latest notifications, newest first. */
+export async function getNotifications(): Promise<AppNotification[]> {
+  const rows = check(
+    await supabase
+      .from('notifications')
+      .select('id, kind, title, body, url, read_at, created_at')
+      .order('created_at', { ascending: false })
+      .limit(50)
+  );
+  return (rows ?? []) as AppNotification[];
+}
+
+export async function countUnreadNotifications(): Promise<number> {
+  return countRows(
+    supabase.from('notifications').select('id', { count: 'exact', head: true }).is('read_at', null)
+  );
+}
+
+/** Marks every notification read, or only those that open `url`. */
+export async function markNotificationsRead(url?: string): Promise<void> {
+  check(await supabase.rpc('mark_notifications_read', { p_url: url ?? null }));
+}
+
+/** Calls back when the user's inbox changes (content-free ping, like the feed). */
+export function subscribeToInbox(userId: string, onChange: () => void) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const channel = supabase
+    .channel(`inbox:${userId}`)
+    .on('broadcast', { event: 'changed' }, () => {
+      clearTimeout(timer);
+      timer = setTimeout(onChange, 300);
+    })
+    .subscribe();
+  return () => {
+    clearTimeout(timer);
+    void supabase.removeChannel(channel);
+  };
+}
+
 export function subscribeToConversation(conversationId: string, onChange: () => void) {
   const channel = supabase
     .channel(`chat:${conversationId}`)
