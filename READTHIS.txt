@@ -121,3 +121,8 @@ Role: Interaction hook for responding to a help request.
 
 Exports useOfferHelp().
 Invokes api.offerHelp(user, postId) to initialize or resume a conversation, navigates to /chat/[id], and triggers a toast message via useNotify if the operation fails.
+
+supabase/migrations/0001_init.sql
+Role: Postgres schema + RLS for the real backend. Mirrors types/models.ts.
+Residents read posts through the feed_posts view, which never exposes author_id for anonymous posts.
+Not applied yet: run it in a Supabase project, then swap the lib/api.ts internals.
