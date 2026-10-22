@@ -4,8 +4,9 @@ import { Redirect, type Href } from 'expo-router';
 
 /** Entry point: routes the user based on their account status. */
 export default function Index() {
-  const { user } = useSession();
+  const { user, ready } = useSession();
 
+  if (!ready) return null; // still checking for a saved login
   if (!user) return <Redirect href="/welcome" />;
   if (user.status !== 'approved') return <Redirect href="/pending" />;
   if (isAdmin(user)) return <Redirect href={'/dashboard' as Href} />;

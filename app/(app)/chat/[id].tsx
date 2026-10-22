@@ -106,7 +106,13 @@ export default function Chat() {
     const text = draft.trim();
     if (!text) return;
     setDraft('');
-    await api.sendMessage(user, summary.id, text);
+    try {
+      await api.sendMessage(user, summary.id, text);
+      await load(); // don't wait for the realtime ping to show our own message
+    } catch (e) {
+      setDraft(text);
+      notify("Couldn't send", (e as Error).message);
+    }
   };
 
   const confirmDialog = async () => {
@@ -115,6 +121,7 @@ export default function Chat() {
     try {
       if (dialog.kind === 'share') {
         await api.shareIdentity(user, summary.id);
+        await load();
       } else {
         if (dialog.kind === 'report-message') {
           await api.createReport(user.id, 'message', dialog.id, 'Reported from chat');
@@ -123,6 +130,8 @@ export default function Chat() {
         }
         notify('Report sent', 'Estate management will review it.');
       }
+    } catch (e) {
+      notify('Something went wrong', (e as Error).message);
     } finally {
       setBusy(false);
       setDialog(null);

@@ -6,44 +6,39 @@ import { Divider } from '@/components/ui/divider';
 import { Heading } from '@/components/ui/heading';
 import { HStack } from '@/components/ui/hstack';
 import { Icon } from '@/components/ui/icon';
+import { Spinner } from '@/components/ui/spinner';
 import { Text } from '@/components/ui/text';
 import { VStack } from '@/components/ui/vstack';
 import * as api from '@/lib/api';
 import { useSession } from '@/lib/session';
 import type { Estate, User, UserStatus } from '@/types/models';
-import { Ban, CircleAlert, CircleX, Clock } from 'lucide-react-native';
+import { Ban, Check, CircleAlert, CircleX, HandHeart } from 'lucide-react-native';
 import React, { useEffect, useState } from 'react';
 import { View } from 'react-native';
 
-const COPY: Record<
-  Exclude<UserStatus, 'approved'>,
-  { icon: typeof Clock; title: string; body: string; tone: string }
-> = {
+type WaitingStatus = Exclude<UserStatus, 'approved'>;
+
+// Pending and needs-info show the welcome-style header and progress steps.
+// Rejected and suspended are final, so they get a plain status icon instead.
+const COPY: Record<WaitingStatus, { title: (first: string) => string; body: string }> = {
   pending: {
-    icon: Clock,
-    title: "We're verifying your address",
-    body: "Your estate management will check your details against their resident registry. We'll send you a notification as soon as you're approved.",
-    tone: 'bg-secondary',
+    title: (first) => `Thanks for joining, ${first}!`,
+    body: "Your estate management is checking your address against their resident registry. You'll be let in as soon as they approve.",
   },
   needs_info: {
-    icon: CircleAlert,
-    title: 'Management needs more info',
+    title: () => 'Management needs more info',
     body: 'Please check the note below and update your details.',
-    tone: 'bg-amber-500/15',
   },
   rejected: {
-    icon: CircleX,
-    title: "We couldn't verify you",
+    title: () => "We couldn't verify you",
     body: "Your address didn't match the estate's resident registry. Contact your management office if you think this is a mistake.",
-    tone: 'bg-destructive/15',
   },
   suspended: {
-    icon: Ban,
-    title: 'Account suspended',
+    title: () => 'Account suspended',
     body: 'Your access has been suspended by estate management. Contact your management office for details.',
-    tone: 'bg-destructive/15',
   },
 };
+
 
 export default function Pending() {
   const { user, setUser, signOut } = useSession();
@@ -69,20 +64,39 @@ export default function Pending() {
   }, [userId, knownStatus, knownNote, setUser]);
 
   if (!user || user.status === 'approved') return null;
-  const copy = COPY[user.status];
+  const status = user.status;
+  const copy = COPY[status];
+  const waiting = status === 'pending' || status === 'needs_info';
 
   return (
     <Screen>
       <VStack className="flex-1 gap-6">
         <VStack className="items-center gap-4 pt-8">
-          <View className={`h-16 w-16 items-center justify-center rounded-full ${copy.tone}`}>
-            <Icon as={copy.icon} className="h-7 w-7 text-foreground" />
-          </View>
-          <Heading size="lg" className="text-center">
-            {copy.title}
+          {waiting ? (
+            <View className="h-20 w-20 items-center justify-center rounded-3xl bg-primary">
+              <Icon as={HandHeart} className="h-10 w-10 text-primary-foreground" />
+            </View>
+          ) : (
+            <View className="h-16 w-16 items-center justify-center rounded-full bg-destructive/15">
+              <Icon as={status === 'suspended' ? Ban : CircleX} className="h-7 w-7 text-foreground" />
+            </View>
+          )}
+          <Heading size="xl" className="text-center">
+            {copy.title(user.name.split(' ')[0])}
           </Heading>
           <Text className="text-center text-muted-foreground">{copy.body}</Text>
         </VStack>
+
+        {waiting && <ProgressSteps needsInfo={status === 'needs_info'} />}
+
+        {status === 'pending' && (
+          <HStack className="items-center justify-center gap-2">
+            <Spinner size="small" className="text-muted-foreground" />
+            <Text size="sm" className="text-muted-foreground">
+              This page updates by itself, no need to refresh.
+            </Text>
+          </HStack>
+        )}
 
         {user.admin_note && (
           <Card className="gap-1">
@@ -93,10 +107,13 @@ export default function Pending() {
           </Card>
         )}
 
-        {user.status === 'needs_info' ? (
+        {status === 'needs_info' ? (
           <ResubmitForm user={user} onSaved={setUser} />
         ) : (
           <Card className="gap-3">
+            <Text size="xs" className="font-semibold uppercase tracking-wide text-muted-foreground">
+              Your submitted details
+            </Text>
             <Detail label="Name" value={user.name} />
             <Divider />
             <Detail label="Estate" value={estate?.name ?? '…'} />
@@ -110,10 +127,77 @@ export default function Pending() {
         <Button variant="outline" onPress={signOut}>
           <ButtonText>Sign out</ButtonText>
         </Button>
-
-        {__DEV__ && <DevApprovalPanel user={user} onChange={setUser} />}
       </VStack>
     </Screen>
+  );
+}
+
+type StepState = 'done' | 'current' | 'attention' | 'upcoming';
+
+/** Account created → management review → join the community. */
+function ProgressSteps({ needsInfo }: { needsInfo: boolean }) {
+  const steps: { title: string; detail: string; state: StepState }[] = [
+    { title: 'Account created', detail: 'Your details were sent to management.', state: 'done' },
+    needsInfo
+      ? { title: 'Action needed', detail: 'Update your details so management can finish the review.', state: 'attention' }
+      : { title: 'Management review', detail: 'Checking your address against the resident registry.', state: 'current' },
+    { title: 'Join your neighbours', detail: 'Post requests, offer help and chat.', state: 'upcoming' },
+  ];
+
+  return (
+    <Card className="gap-0">
+      {steps.map((step, i) => (
+        <HStack key={step.title} className="gap-3">
+          <View className="items-center">
+            <StepMarker state={step.state} number={i + 1} />
+            {i < steps.length - 1 && <View className="my-1 w-0.5 flex-1 bg-border" />}
+          </View>
+          <VStack className={`flex-1 gap-0.5 ${i < steps.length - 1 ? 'pb-5' : ''}`}>
+            <Text
+              className={`font-semibold ${
+                step.state === 'upcoming' ? 'text-muted-foreground' : ''
+              } ${step.state === 'attention' ? 'text-amber-700 dark:text-amber-400' : ''}`}
+            >
+              {step.title}
+            </Text>
+            <Text size="sm" className="text-muted-foreground">
+              {step.detail}
+            </Text>
+          </VStack>
+        </HStack>
+      ))}
+    </Card>
+  );
+}
+
+function StepMarker({ state, number }: { state: StepState; number: number }) {
+  if (state === 'done') {
+    return (
+      <View className="h-7 w-7 items-center justify-center rounded-full bg-brand">
+        <Icon as={Check} size="sm" className="text-brand-foreground" />
+      </View>
+    );
+  }
+  if (state === 'current') {
+    return (
+      <View className="h-7 w-7 items-center justify-center rounded-full border-2 border-brand">
+        <View className="h-2.5 w-2.5 rounded-full bg-brand" />
+      </View>
+    );
+  }
+  if (state === 'attention') {
+    return (
+      <View className="h-7 w-7 items-center justify-center rounded-full bg-amber-500/15">
+        <Icon as={CircleAlert} size="sm" className="text-amber-600 dark:text-amber-400" />
+      </View>
+    );
+  }
+  return (
+    <View className="h-7 w-7 items-center justify-center rounded-full border border-border">
+      <Text size="xs" className="font-semibold text-muted-foreground">
+        {number}
+      </Text>
+    </View>
   );
 }
 
@@ -161,36 +245,5 @@ function ResubmitForm({ user, onSaved }: { user: User; onSaved: (u: User) => voi
         <ButtonText>Resubmit for approval</ButtonText>
       </Button>
     </VStack>
-  );
-}
-
-/** Dev-only stand-in for the admin portal so the flow can be tested end to end. */
-function DevApprovalPanel({ user, onChange }: { user: User; onChange: (u: User) => void }) {
-  const act = async (status: UserStatus, note?: string) =>
-    onChange(await api.devSetStatus(user.id, status, note));
-
-  return (
-    <Card className="gap-3 border-dashed">
-      <Text size="xs" className="font-medium uppercase text-muted-foreground">
-        Dev: simulate admin
-      </Text>
-      <HStack className="flex-wrap gap-2">
-        <Button size="sm" onPress={() => act('approved')}>
-          <ButtonText>Approve</ButtonText>
-        </Button>
-        <Button
-          size="sm"
-          variant="secondary"
-          onPress={() =>
-            act('needs_info', 'We could not find this unit number in Block ' + user.block + '. Please double-check it.')
-          }
-        >
-          <ButtonText>Request info</ButtonText>
-        </Button>
-        <Button size="sm" variant="destructive" onPress={() => act('rejected')}>
-          <ButtonText>Reject</ButtonText>
-        </Button>
-      </HStack>
-    </Card>
   );
 }

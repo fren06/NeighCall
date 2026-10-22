@@ -86,6 +86,8 @@ export default function SignUp() {
     try {
       const { confirmPassword, ...input } = form;
       await signUp(input);
+      // Index sends the new (pending) account to the right screen.
+      router.replace('/');
     } catch (err) {
       setSubmitError((err as Error).message);
       setBusy(false);
