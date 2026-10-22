@@ -9,7 +9,6 @@ import { Text } from '@/components/ui/text';
 import * as api from '@/lib/api';
 import { useSession } from '@/lib/session';
 import { useNotify } from '@/lib/use-notify';
-import type { SkillId } from '@/types/models';
 import { router } from 'expo-router';
 import { Lock, X } from 'lucide-react-native';
 import React, { useState } from 'react';
@@ -19,7 +18,7 @@ export default function EditProfile() {
   const { user, setUser } = useSession();
   const notify = useNotify();
   const [phone, setPhone] = useState(user?.phone ?? '');
-  const [skills, setSkills] = useState<SkillId[]>(user?.skills ?? []);
+  const [skills, setSkills] = useState<string[]>(user?.skills ?? []);
   const [phoneError, setPhoneError] = useState<string>();
   const [saving, setSaving] = useState(false);
 

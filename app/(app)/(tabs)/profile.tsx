@@ -15,7 +15,7 @@ import { useSession } from '@/lib/session';
 import { palette } from '@/lib/theme';
 import { useIsDark, useThemeMode } from '@/lib/theme-mode';
 import { useNotify } from '@/lib/use-notify';
-import { SKILLS, type Estate, type NotificationPrefs } from '@/types/models';
+import { skillLabel, type Estate, type NotificationPrefs } from '@/types/models';
 import { router } from 'expo-router';
 import { LogOut, Pencil, ShieldCheck } from 'lucide-react-native';
 import React, { useEffect, useState } from 'react';
@@ -39,7 +39,7 @@ export default function Profile() {
   }, [user?.estate_id]);
 
   if (!user) return null;
-  const skills = SKILLS.filter((s) => (user.skills as string[]).includes(s.id));
+  const skills = user.skills.map((id) => ({ id, label: skillLabel(id) }));
   const prefs = user.notifications;
 
   // Settings toggles apply immediately; roll back if the save fails.

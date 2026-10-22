@@ -8,7 +8,6 @@ import { Text } from '@/components/ui/text';
 import * as api from '@/lib/api';
 import { useSession } from '@/lib/session';
 import { useNotify } from '@/lib/use-notify';
-import type { SkillId } from '@/types/models';
 import { router, useLocalSearchParams } from 'expo-router';
 import { X } from 'lucide-react-native';
 import React, { useEffect, useState } from 'react';
@@ -21,16 +20,18 @@ interface Form {
   block: string;
   unit_number: string;
   street: string;
-  skills: SkillId[];
+  skills: string[];
   password: string;
 }
 
-/** Add a resident (no id param) or edit one (?id=...). */
+/** Add a resident or manager (?role=management), or edit one (?id=...). */
 export default function UserForm() {
-  const { id } = useLocalSearchParams<{ id?: string }>();
+  const { id, role: roleParam } = useLocalSearchParams<{ id?: string; role?: string }>();
   const { user: admin } = useSession();
   const notify = useNotify();
   const editing = !!id;
+  const [isManager, setIsManager] = useState(roleParam === 'management');
+  const who = isManager ? 'manager' : 'resident';
 
   const [form, setForm] = useState<Form>({
     name: '',
@@ -51,6 +52,7 @@ export default function UserForm() {
     api.getResidents(admin).then((list) => {
       const u = list.find((r) => r.id === id);
       if (u) {
+        setIsManager(u.role === 'management');
         setForm((f) => ({
           ...f,
           name: u.name,
@@ -62,7 +64,7 @@ export default function UserForm() {
           skills: u.skills,
         }));
       } else {
-        setError('That resident no longer exists.');
+        setError('That account no longer exists.');
       }
       setLoaded(true);
     });
@@ -84,10 +86,15 @@ export default function UserForm() {
       const { password, ...details } = form;
       if (editing) {
         await api.adminUpdateUser(admin, id!, details);
-        notify('Resident updated', form.name);
+        notify(`${isManager ? 'Manager' : 'Resident'} updated`, form.name);
       } else {
-        await api.adminCreateUser(admin, { ...details, password });
-        notify('Resident added', `${form.name} can sign in now.`);
+        await api.adminCreateUser(admin, {
+          ...details,
+          skills: isManager ? [] : details.skills,
+          password,
+          role: isManager ? 'management' : 'resident',
+        });
+        notify(`${isManager ? 'Manager' : 'Resident'} added`, `${form.name} can sign in now.`);
       }
       router.back();
     } catch (e) {
@@ -102,7 +109,7 @@ export default function UserForm() {
         <Button variant="ghost" size="icon" onPress={() => router.back()} accessibilityLabel="Close">
           <ButtonIcon as={X} />
         </Button>
-        <Text className="flex-1 font-semibold">{editing ? 'Edit resident' : 'Add resident'}</Text>
+        <Text className="flex-1 font-semibold">{editing ? `Edit ${who}` : `Add ${who}`}</Text>
         <Button variant="brand" size="sm" onPress={save} isDisabled={busy || !loaded} className="mr-2">
           {busy && <ButtonSpinner />}
           <ButtonText>{editing ? 'Save' : 'Add'}</ButtonText>
@@ -161,16 +168,20 @@ export default function UserForm() {
             />
           )}
 
+          {!isManager && (
           <View className="gap-2">
             <Text size="sm" className="font-medium">
               Skills <Text className="text-muted-foreground">(optional)</Text>
             </Text>
             <SkillPicker value={form.skills} onChange={set('skills')} />
           </View>
+          )}
 
           {!editing && (
             <Text size="xs" className="text-muted-foreground">
-              Residents added here are treated as verified and start approved.
+              {isManager
+                ? 'Managers can publish bulletins and handle community issues. They start approved.'
+                : 'Residents added here are treated as verified and start approved.'}
             </Text>
           )}
         </ScrollView>

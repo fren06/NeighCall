@@ -8,7 +8,7 @@ import * as api from '@/lib/api';
 import { useSession } from '@/lib/session';
 import type { Estate } from '@/types/models';
 import { router, useFocusEffect, type Href } from 'expo-router';
-import { Ban, Flag, LogOut, type LucideIcon, UserCheck, UserPlus, Users } from 'lucide-react-native';
+import { Ban, Flag, LogOut, type LucideIcon, ShieldUser, UserCheck, UserPlus, Users } from 'lucide-react-native';
 import React, { useCallback, useState } from 'react';
 import { RefreshControl, ScrollView, View } from 'react-native';
 
@@ -125,6 +125,13 @@ export default function Dashboard() {
             value={stats?.approved}
             label="Approved residents"
             hint="With full access"
+            href={'/users' as Href}
+          />
+          <StatCard
+            icon={ShieldUser}
+            value={stats?.staff}
+            label="Management staff"
+            hint="Bulletins and issues"
             href={'/users' as Href}
           />
           <StatCard

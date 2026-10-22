@@ -61,7 +61,8 @@ export interface User extends Address {
   name: string;
   email: string;
   phone: string;
-  skills: SkillId[];
+  /** Known skill ids, or free text the user entered under "Other". */
+  skills: string[];
   notifications: NotificationPrefs;
   role: UserRole;
   status: UserStatus;
@@ -94,6 +95,9 @@ export const SKILLS = [
 ] as const;
 
 export type SkillId = (typeof SKILLS)[number]['id'];
+
+/** Display label: known skills use their label, custom ones show as typed. */
+export const skillLabel = (skill: string) => SKILLS.find((s) => s.id === skill)?.label ?? skill;
 
 // ─── Posts ────────────────────────────────────────────────────────────────
 
@@ -264,5 +268,5 @@ export interface SignUpInput extends Address {
   email: string;
   phone: string;
   password: string;
-  skills: SkillId[];
+  skills: string[];
 }

@@ -21,7 +21,6 @@ import type {
   ReportStatus,
   ReportTarget,
   SignUpInput,
-  SkillId,
   User,
 } from '@/types/models';
 
@@ -422,6 +421,10 @@ function assertAdmin(viewer: User) {
 const estateResidents = (viewer: User) =>
   mock.users.filter((u) => u.role === 'resident' && u.estate_id === viewer.estate_id);
 
+/** Accounts an admin looks after: residents and management staff (not admins). */
+const estateManaged = (viewer: User) =>
+  mock.users.filter((u) => u.role !== 'admin' && u.estate_id === viewer.estate_id);
+
 export async function getManagementOverview(viewer: User): Promise<ManagementOverview> {
   assertStaff(viewer);
   await delay(250);
@@ -438,11 +441,11 @@ export async function getManagementOverview(viewer: User): Promise<ManagementOve
   };
 }
 
-/** Residents of the staff member's estate, newest registrations first. */
+/** Residents and management staff of the admin's estate, newest first. */
 export async function getResidents(viewer: User): Promise<User[]> {
   assertAdmin(viewer);
   await delay(300);
-  return estateResidents(viewer)
+  return estateManaged(viewer)
     .sort((a, b) => b.created_at.localeCompare(a.created_at))
     .map((u) => ({ ...u }));
 }
@@ -456,8 +459,8 @@ export async function reviewResident(
 ): Promise<User> {
   assertAdmin(viewer);
   await delay(300);
-  const user = estateResidents(viewer).find((u) => u.id === userId);
-  if (!user) throw new ApiError('Resident not found.');
+  const user = estateManaged(viewer).find((u) => u.id === userId);
+  if (!user) throw new ApiError('User not found.');
   if (status === 'needs_info' && !note?.trim()) {
     throw new ApiError('Tell the resident what information you need.');
   }
@@ -626,6 +629,7 @@ export interface AdminOverview {
   pending: number;
   approved: number;
   restricted: number;
+  staff: number;
   open_reports: number;
   investigating_reports: number;
 }
@@ -639,6 +643,7 @@ export async function getAdminOverview(viewer: User): Promise<AdminOverview> {
     pending: count('pending', 'needs_info'),
     approved: count('approved'),
     restricted: count('rejected', 'suspended'),
+    staff: estateManaged(viewer).filter((u) => u.role === 'management').length,
     open_reports: mock.reports.filter((r) => r.status === 'open').length,
     investigating_reports: mock.reports.filter((r) => r.status === 'investigating').length,
   };
@@ -651,7 +656,7 @@ export interface AdminUserInput {
   block: string;
   unit_number: string;
   street: string;
-  skills: SkillId[];
+  skills: string[];
 }
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -666,7 +671,7 @@ function validateAdminUser(input: AdminUserInput) {
 }
 
 const cleanUserInput = (input: AdminUserInput): AdminUserInput => ({
-  ...input,
+  skills: input.skills,
   name: input.name.trim(),
   email: input.email.trim().toLowerCase(),
   phone: input.phone.trim(),
@@ -675,10 +680,13 @@ const cleanUserInput = (input: AdminUserInput): AdminUserInput => ({
   street: input.street.trim(),
 });
 
-/** Adds a resident directly. They are pre-verified, so they start approved. */
+/**
+ * Adds a resident or a management account directly. Both are pre-verified,
+ * so they start approved.
+ */
 export async function adminCreateUser(
   viewer: User,
-  input: AdminUserInput & { password: string }
+  input: AdminUserInput & { password: string; role?: 'resident' | 'management' }
 ): Promise<User> {
   assertAdmin(viewer);
   await delay(400);
@@ -693,7 +701,7 @@ export async function adminCreateUser(
     estate_id: viewer.estate_id,
     notifications: DEFAULT_NOTIFICATIONS,
     id: `usr-${Date.now()}`,
-    role: 'resident',
+    role: input.role ?? 'resident',
     status: 'approved',
     created_at: new Date().toISOString(),
   };
@@ -702,7 +710,7 @@ export async function adminCreateUser(
   return { ...user };
 }
 
-/** Edits a resident's profile details (not their role, status or password). */
+/** Edits a resident's or manager's details (not their role, status or password). */
 export async function adminUpdateUser(
   viewer: User,
   userId: string,
@@ -710,8 +718,8 @@ export async function adminUpdateUser(
 ): Promise<User> {
   assertAdmin(viewer);
   await delay(300);
-  const user = estateResidents(viewer).find((u) => u.id === userId);
-  if (!user) throw new ApiError('Resident not found.');
+  const user = estateManaged(viewer).find((u) => u.id === userId);
+  if (!user) throw new ApiError('User not found.');
   validateAdminUser(input);
   const data = cleanUserInput(input);
   if (data.email !== user.email) {
@@ -730,8 +738,8 @@ export async function adminUpdateUser(
 export async function adminDeleteUser(viewer: User, userId: string): Promise<void> {
   assertAdmin(viewer);
   await delay(300);
-  const user = estateResidents(viewer).find((u) => u.id === userId);
-  if (!user) throw new ApiError('Resident not found.');
+  const user = estateManaged(viewer).find((u) => u.id === userId);
+  if (!user) throw new ApiError('User not found.');
 
   const gone = new Set(
     mock.conversations

@@ -9,13 +9,13 @@ import * as api from '@/lib/api';
 import { useSession } from '@/lib/session';
 import { timeAgo } from '@/lib/post-meta';
 import { useNotify } from '@/lib/use-notify';
-import { SKILLS, type User, type UserStatus } from '@/types/models';
+import { skillLabel, type User, type UserStatus } from '@/types/models';
 import { router, useFocusEffect, type Href } from 'expo-router';
 import { Pencil, Trash2, UserPlus } from 'lucide-react-native';
 import React, { useCallback, useMemo, useState } from 'react';
 import { FlatList, RefreshControl, View } from 'react-native';
 
-type Filter = 'pending' | 'approved' | 'other';
+type Filter = 'pending' | 'approved' | 'other' | 'staff';
 
 const STATUS_PILL: Record<UserStatus, { label: string; tone: 'neutral' | 'good' | 'warn' | 'bad' }> = {
   pending: { label: 'Pending', tone: 'warn' },
@@ -24,8 +24,6 @@ const STATUS_PILL: Record<UserStatus, { label: string; tone: 'neutral' | 'good' 
   rejected: { label: 'Rejected', tone: 'bad' },
   suspended: { label: 'Suspended', tone: 'bad' },
 };
-
-const skillLabel = (id: string) => SKILLS.find((s) => s.id === id)?.label ?? id;
 
 function ResidentCard({
   resident,
@@ -44,6 +42,7 @@ function ResidentCard({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const pill = STATUS_PILL[resident.status];
+  const isManager = resident.role === 'management';
 
   const act = async (status: UserStatus, done: string) => {
     if (!staff) return;
@@ -69,7 +68,7 @@ function ResidentCard({
     setDeleting(true);
     try {
       await api.adminDeleteUser(staff, resident.id);
-      notify('Resident deleted', resident.name);
+      notify(isManager ? 'Manager deleted' : 'Resident deleted', resident.name);
       onDeleted(resident.id);
     } catch (e) {
       notify("Couldn't delete", (e as Error).message);
@@ -113,7 +112,10 @@ function ResidentCard({
               Block {resident.block} · Unit {resident.unit_number} · {resident.street}
             </Text>
           </View>
-          <Pill label={pill.label} tone={pill.tone} />
+          <View className="items-end gap-1">
+            {isManager && <Pill label="Management" />}
+            <Pill label={pill.label} tone={pill.tone} />
+          </View>
         </View>
         <Text size="xs" className="text-muted-foreground">
           {resident.email} · {resident.phone} · registered {timeAgo(resident.created_at)} ago
@@ -132,6 +134,7 @@ function ResidentCard({
 
       {open && (
         <View className="gap-3 border-t border-border pt-3">
+          {!isManager && (
           <TextField
             label="Note to resident"
             helper={
@@ -144,8 +147,9 @@ function ResidentCard({
             placeholder="e.g. Please confirm your unit number"
             multiline
           />
+          )}
           <View className="flex-row gap-2">
-            {(s === 'pending' || s === 'needs_info') && (
+            {!isManager && (s === 'pending' || s === 'needs_info') && (
               <>
                 {actionButton('approved', 'Approve', 'Resident approved', 'brand')}
                 {actionButton('needs_info', 'Ask info', 'Info requested', 'outline')}
@@ -205,9 +209,14 @@ export default function Users() {
   const groups = useMemo(() => {
     const all = residents ?? [];
     return {
-      pending: all.filter((r) => r.status === 'pending' || r.status === 'needs_info'),
-      approved: all.filter((r) => r.status === 'approved'),
-      other: all.filter((r) => r.status === 'rejected' || r.status === 'suspended'),
+      pending: all.filter(
+        (r) => r.role === 'resident' && (r.status === 'pending' || r.status === 'needs_info')
+      ),
+      approved: all.filter((r) => r.role === 'resident' && r.status === 'approved'),
+      other: all.filter(
+        (r) => r.role === 'resident' && (r.status === 'rejected' || r.status === 'suspended')
+      ),
+      staff: all.filter((r) => r.role === 'management'),
     };
   }, [residents]);
 
@@ -229,9 +238,14 @@ export default function Users() {
           <View className="gap-4 pb-4 pt-4">
             <View className="flex-row items-center justify-between gap-3">
               <Heading size="2xl">Users</Heading>
-              <Button variant="brand" size="sm" onPress={() => router.push('/user-form' as Href)}>
+              <Button variant="brand" size="sm" onPress={() =>
+                  router.push(
+                    (filter === 'staff' ? '/user-form?role=management' : '/user-form') as Href
+                  )
+                }
+              >
                 <ButtonIcon as={UserPlus} />
-                <ButtonText>Add resident</ButtonText>
+                <ButtonText>{filter === 'staff' ? 'Add manager' : 'Add resident'}</ButtonText>
               </Button>
             </View>
             <FilterChips
@@ -241,6 +255,7 @@ export default function Users() {
                 { id: 'pending', label: 'To review', count: groups.pending.length },
                 { id: 'approved', label: 'Approved', count: groups.approved.length },
                 { id: 'other', label: 'Rejected / suspended', count: groups.other.length },
+                { id: 'staff', label: 'Management', count: groups.staff.length },
               ]}
             />
           </View>
