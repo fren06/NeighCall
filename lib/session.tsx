@@ -8,6 +8,8 @@ interface SessionValue {
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (input: SignUpInput) => Promise<void>;
   signOut: () => void;
+  /** Permanently deletes the signed-in resident's account, then signs out. */
+  deleteAccount: () => Promise<void>;
   /** Replace the cached user, e.g. after a profile update. */
   setUser: (user: User) => void;
 }
@@ -23,6 +25,11 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       signIn: async (email, password) => setUser(await api.signIn(email, password)),
       signUp: async (input) => setUser(await api.signUp(input)),
       signOut: () => setUser(null),
+      deleteAccount: async () => {
+        if (!user) return;
+        await api.deleteOwnAccount(user);
+        setUser(null);
+      },
       setUser,
     }),
     [user]

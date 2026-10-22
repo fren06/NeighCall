@@ -69,6 +69,15 @@ export async function signIn(email: string, password: string): Promise<User> {
   return user;
 }
 
+/**
+ * Mock of Supabase `resetPasswordForEmail`. Always resolves so the response
+ * never reveals whether an account exists for the address.
+ */
+export async function requestPasswordReset(email: string): Promise<void> {
+  await delay(600);
+  if (!email.trim()) throw new ApiError('Enter your email address.');
+}
+
 /** Latest copy of a user, e.g. to notice when management has reviewed them. */
 export async function getUser(id: string): Promise<User | undefined> {
   const user = mock.users.find((u) => u.id === id);
@@ -767,7 +776,20 @@ export async function adminDeleteUser(viewer: User, userId: string): Promise<voi
   await delay(300);
   const user = estateManaged(viewer).find((u) => u.id === userId);
   if (!user) throw new ApiError('User not found.');
+  purgeUser(user);
+}
 
+/** Lets a resident delete their own account and everything they posted. */
+export async function deleteOwnAccount(viewer: User): Promise<void> {
+  await delay(400);
+  if (viewer.role !== 'resident') throw new ApiError('Staff accounts are removed by an admin.');
+  const user = mock.users.find((u) => u.id === viewer.id);
+  if (!user) throw new ApiError('User not found.');
+  purgeUser(user);
+}
+
+function purgeUser(user: User) {
+  const userId = user.id;
   const gone = new Set(
     mock.conversations
       .filter((c) => c.requester_id === userId || c.helper_id === userId)
@@ -782,3 +804,4 @@ export async function adminDeleteUser(viewer: User, userId: string): Promise<voi
   keep(mock.users, (u) => u.id !== userId);
   delete mock.passwords[user.email];
 }
+
