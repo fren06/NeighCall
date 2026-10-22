@@ -16,6 +16,7 @@ import type {
   Message,
   NewPostInput,
   PostAnalysis,
+  PostStatus,
   Report,
   ReportDetail,
   ReportStatus,
@@ -171,6 +172,32 @@ export async function getPost(viewer: User, postId: string): Promise<FeedPost | 
   await delay(200);
   const post = mock.posts.find((p) => p.id === postId && p.estate_id === viewer.estate_id);
   return post && toFeedPost(post, viewer.id);
+}
+
+/** Author-only: move a request between open / in progress / resolved. */
+export async function updatePostStatus(
+  viewer: User,
+  postId: string,
+  status: PostStatus
+): Promise<void> {
+  await delay(300);
+  const post = mock.posts.find((p) => p.id === postId);
+  if (!post || post.author_id !== viewer.id) throw new ApiError('You can only update your own requests.');
+  post.status = status;
+}
+
+/** Author-only: removes the request and its chats. */
+export async function deletePost(viewer: User, postId: string): Promise<void> {
+  await delay(300);
+  const idx = mock.posts.findIndex((p) => p.id === postId);
+  if (idx < 0 || mock.posts[idx].author_id !== viewer.id)
+    throw new ApiError('You can only delete your own requests.');
+  mock.posts.splice(idx, 1);
+  const convoIds = new Set(mock.conversations.filter((c) => c.post_id === postId).map((c) => c.id));
+  for (let i = mock.conversations.length - 1; i >= 0; i--)
+    if (convoIds.has(mock.conversations[i].id)) mock.conversations.splice(i, 1);
+  for (let i = mock.messages.length - 1; i >= 0; i--)
+    if (convoIds.has(mock.messages[i].conversation_id)) mock.messages.splice(i, 1);
 }
 
 /** Bulletins still pinned for the estate, newest first. */

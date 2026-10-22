@@ -10,19 +10,50 @@ import { useSession } from '@/lib/session';
 import { useOfferHelp } from '@/lib/use-offer-help';
 import type { FeedPost } from '@/types/models';
 import { router, useLocalSearchParams } from 'expo-router';
-import { ArrowLeft, HandHelping, MessageCircle } from 'lucide-react-native';
+import { useNotify } from '@/lib/use-notify';
+import { ArrowLeft, CheckCircle2, HandHelping, MessageCircle, Trash2 } from 'lucide-react-native';
 import React, { useEffect, useState } from 'react';
-import { Image, View } from 'react-native';
+import { Alert, Image, Platform, View } from 'react-native';
 
 export default function PostDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { user } = useSession();
   const offerHelp = useOfferHelp();
+  const notify = useNotify();
   const [post, setPost] = useState<FeedPost | null>();
 
   useEffect(() => {
     if (user && id) api.getPost(user, id).then((p) => setPost(p ?? null));
   }, [user, id]);
+
+  const setStatus = async (status: 'open' | 'in_progress' | 'resolved') => {
+    if (!user || !post) return;
+    try {
+      await api.updatePostStatus(user, post.id, status);
+      setPost({ ...post, status });
+      notify('Request updated', STATUS_META[status].label);
+    } catch (e) {
+      notify("Couldn't update", (e as Error).message);
+    }
+  };
+
+  const remove = async () => {
+    if (!user || !post) return;
+    await api.deletePost(user, post.id);
+    notify('Request deleted');
+    router.back();
+  };
+
+  const confirmRemove = () => {
+    if (Platform.OS === 'web') {
+      if (window.confirm('Delete this request and its chats?')) remove();
+      return;
+    }
+    Alert.alert('Delete request?', 'This also removes its chats.', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: remove },
+    ]);
+  };
 
   const { analysis, author } = post ?? {};
   const canHelp = post && !post.is_mine && post.status !== 'resolved';
@@ -33,7 +64,12 @@ export default function PostDetail() {
         <Button variant="ghost" size="icon" onPress={() => router.back()} accessibilityLabel="Back">
           <ButtonIcon as={ArrowLeft} />
         </Button>
-        <Text className="font-semibold">Request</Text>
+        <Text className="flex-1 font-semibold">Request</Text>
+        {post?.is_mine && (
+          <Button variant="ghost" size="icon" onPress={confirmRemove} accessibilityLabel="Delete request">
+            <ButtonIcon as={Trash2} />
+          </Button>
+        )}
       </View>
 
       {post === null && (
@@ -75,6 +111,27 @@ export default function PostDetail() {
               </View>
             )}
           </ScrollView>
+
+          {post.is_mine && post.status !== 'resolved' && (
+            <View className="w-full max-w-xl flex-row gap-2 self-center border-t border-border p-4">
+              {post.status === 'open' && (
+                <Button className="flex-1" variant="outline" onPress={() => setStatus('in_progress')}>
+                  <ButtonText>Mark in progress</ButtonText>
+                </Button>
+              )}
+              <Button className="flex-1" variant="brand" onPress={() => setStatus('resolved')}>
+                <ButtonIcon as={CheckCircle2} />
+                <ButtonText>Mark resolved</ButtonText>
+              </Button>
+            </View>
+          )}
+          {post.is_mine && post.status === 'resolved' && (
+            <View className="w-full max-w-xl self-center border-t border-border p-4">
+              <Button variant="outline" onPress={() => setStatus('open')}>
+                <ButtonText>Reopen request</ButtonText>
+              </Button>
+            </View>
+          )}
 
           {post.is_mine && post.helper_count > 0 && (
             <View className="w-full max-w-xl self-center border-t border-border p-4">
