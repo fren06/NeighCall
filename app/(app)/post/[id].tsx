@@ -11,7 +11,7 @@ import { useOfferHelp } from '@/lib/use-offer-help';
 import type { FeedPost } from '@/types/models';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useNotify } from '@/lib/use-notify';
-import { ArrowLeft, CheckCircle2, HandHelping, MessageCircle, Trash2 } from 'lucide-react-native';
+import { ArrowLeft, CheckCircle2, HandHelping, Flag, MessageCircle, Trash2 } from 'lucide-react-native';
 import React, { useEffect, useState } from 'react';
 import { Alert, Image, Platform, View } from 'react-native';
 
@@ -44,6 +44,23 @@ export default function PostDetail() {
     router.back();
   };
 
+  const report = async () => {
+    if (!user || !post) return;
+    await api.createReport(user.id, 'post', post.id, 'Reported from post');
+    notify('Report sent', 'Estate management will review it.');
+  };
+
+  const confirmReport = () => {
+    if (Platform.OS === 'web') {
+      if (window.confirm('Report this request to estate management?')) report();
+      return;
+    }
+    Alert.alert('Report this request?', 'Estate management will review it. The author is not told who reported it.', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Report', style: 'destructive', onPress: report },
+    ]);
+  };
+
   const confirmRemove = () => {
     if (Platform.OS === 'web') {
       if (window.confirm('Delete this request and its chats?')) remove();
@@ -65,6 +82,11 @@ export default function PostDetail() {
           <ButtonIcon as={ArrowLeft} />
         </Button>
         <Text className="flex-1 font-semibold">Request</Text>
+        {post && !post.is_mine && (
+          <Button variant="ghost" size="icon" onPress={confirmReport} accessibilityLabel="Report request">
+            <ButtonIcon as={Flag} />
+          </Button>
+        )}
         {post?.is_mine && (
           <Button variant="ghost" size="icon" onPress={confirmRemove} accessibilityLabel="Delete request">
             <ButtonIcon as={Trash2} />
