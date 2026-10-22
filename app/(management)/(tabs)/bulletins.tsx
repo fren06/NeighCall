@@ -1,6 +1,6 @@
 import { Pill } from '@/components/management/Chips';
 import { Button, ButtonIcon, ButtonText } from '@/components/ui/button';
-import { Fab, FabIcon, FabLabel } from '@/components/ui/fab';
+import { Fab, FabIcon } from '@/components/ui/fab';
 import { Heading } from '@/components/ui/heading';
 import { SafeAreaView } from '@/components/ui/safe-area-view';
 import { Text } from '@/components/ui/text';
@@ -114,12 +114,11 @@ export default function Bulletins() {
       <Fab
         size="lg"
         placement="bottom right"
-        className="bg-brand shadow-lg"
+        className="h-14 w-14 bg-brand p-0 shadow-lg"
         onPress={() => router.push('/compose-bulletin' as Href)}
         accessibilityLabel="New bulletin"
       >
-        <FabIcon as={Plus} className="text-brand-foreground" />
-        <FabLabel className="font-semibold text-brand-foreground">New bulletin</FabLabel>
+        <FabIcon as={Plus} className="h-6 w-6 text-brand-foreground" />
       </Fab>
     </SafeAreaView>
   );

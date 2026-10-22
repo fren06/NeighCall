@@ -1,23 +1,19 @@
-// Data access layer. Screens only talk to these functions, so swapping the
-// mock implementation for Supabase later doesn't touch any UI code.
+// Data access layer. Screens only talk to these functions; all of them are
+// backed by Supabase. Only the AI analysis is still a local stand-in.
 import { analyzeText } from '@/lib/mock-ai';
-import * as mock from '@/lib/mock-data';
-import { DEFAULT_NOTIFICATIONS, isAdmin, isStaff } from '@/types/models';
+import { supabase } from '@/lib/supabase';
+import { isAdmin, isStaff } from '@/types/models';
 import type {
   Bulletin,
   BulletinInput,
   ChatMessage,
-  ChatPeer,
-  Conversation,
   ConversationSummary,
   Estate,
   FeedPost,
   ManagementOverview,
-  Message,
   NewPostInput,
   PostAnalysis,
   PostStatus,
-  Report,
   ReportDetail,
   ReportStatus,
   ReportTarget,
@@ -29,79 +25,126 @@ const delay = (ms = 400) => new Promise((r) => setTimeout(r, ms));
 
 export class ApiError extends Error {}
 
+// ─── Supabase helpers ─────────────────────────────────────────────────────
+
+/** Unwraps a Supabase response, turning its error into an ApiError. */
+function check<T>({ data, error }: { data: T; error: { message: string } | null }): T {
+  if (error) throw new ApiError(error.message);
+  return data;
+}
+
+const USER_COLUMNS =
+  'id, estate_id, name, email, phone, block, unit_number, street, skills, notifications, role, status, admin_note, warning_count, created_at';
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const toUser = (row: any): User => ({ ...row, admin_note: row.admin_note ?? undefined });
+
+async function fetchProfile(id: string): Promise<User> {
+  const row = check(await supabase.from('users').select(USER_COLUMNS).eq('id', id).maybeSingle());
+  if (!row) throw new ApiError('No NeighCall profile was found for this account.');
+  return toUser(row);
+}
+
+const AUTH_MESSAGES: Record<string, string> = {
+  'Invalid login credentials': 'Incorrect email or password.',
+  'User already registered': 'An account with this email already exists.',
+};
+const authError = (message: string) => new ApiError(AUTH_MESSAGES[message] ?? message);
+
+// ─── Estates & accounts ───────────────────────────────────────────────────
+
 export async function getEstates(): Promise<Estate[]> {
-  await delay(200);
-  return mock.estates;
+  return check(await supabase.from('estates').select('id, name, area').order('name')) ?? [];
 }
 
 export async function getEstate(id: string): Promise<Estate | undefined> {
-  return mock.estates.find((e) => e.id === id);
+  return check(await supabase.from('estates').select('id, name, area').eq('id', id).maybeSingle()) ?? undefined;
 }
 
 export async function signUp(input: SignUpInput): Promise<User> {
-  await delay();
-  const email = input.email.trim().toLowerCase();
-  if (mock.users.some((u) => u.email === email)) {
-    throw new ApiError('An account with this email already exists.');
+  const { email, password, ...profile } = input;
+  const { data, error } = await supabase.auth.signUp({
+    email: email.trim().toLowerCase(),
+    password,
+    // Read by the handle_new_auth_user trigger to create the profile row.
+    options: { data: profile },
+  });
+  if (error) throw authError(error.message);
+  if (!data.session || !data.user) {
+    throw new ApiError('Check your email to confirm your account, then sign in.');
   }
-  const { password, ...profile } = input;
-  const user: User = {
-    ...profile,
-    email,
-    notifications: DEFAULT_NOTIFICATIONS,
-    id: `usr-${Date.now()}`,
-    role: 'resident',
-    status: 'pending',
-    created_at: new Date().toISOString(),
-  };
-  mock.users.push(user);
-  mock.passwords[email] = password;
-  return user;
+  return fetchProfile(data.user.id);
 }
 
 export async function signIn(email: string, password: string): Promise<User> {
-  await delay();
-  const key = email.trim().toLowerCase();
-  const user = mock.users.find((u) => u.email === key);
-  if (!user || mock.passwords[key] !== password) {
-    throw new ApiError('Incorrect email or password.');
+  const { data, error } = await supabase.auth.signInWithPassword({
+    email: email.trim().toLowerCase(),
+    password,
+  });
+  if (error) throw authError(error.message);
+  try {
+    return await fetchProfile(data.user.id);
+  } catch (e) {
+    await supabase.auth.signOut({ scope: 'local' });
+    throw e;
   }
-  return user;
 }
 
-/**
- * Mock of Supabase `resetPasswordForEmail`. Always resolves so the response
- * never reveals whether an account exists for the address.
- */
+export async function signOut(): Promise<void> {
+  await supabase.auth.signOut({ scope: 'local' });
+}
+
+/** The signed-in user from a saved login, if there is one. */
+export async function restoreSession(): Promise<User | null> {
+  const { data } = await supabase.auth.getSession();
+  if (!data.session) return null;
+  try {
+    return await fetchProfile(data.session.user.id);
+  } catch {
+    await signOut();
+    return null;
+  }
+}
+
+/** Calls back when the login ends elsewhere (expired, or signed out on another tab). */
+export function onSignedOut(callback: () => void) {
+  const { data } = supabase.auth.onAuthStateChange((event) => {
+    if (event === 'SIGNED_OUT') callback();
+  });
+  return () => data.subscription.unsubscribe();
+}
+
+/** Always resolves, so the response never reveals whether an account exists. */
 export async function requestPasswordReset(email: string): Promise<void> {
-  await delay(600);
   if (!email.trim()) throw new ApiError('Enter your email address.');
+  const { error } = await supabase.auth.resetPasswordForEmail(email.trim().toLowerCase());
+  if (error) throw new ApiError(error.message);
 }
 
 /** Latest copy of a user, e.g. to notice when management has reviewed them. */
 export async function getUser(id: string): Promise<User | undefined> {
-  const user = mock.users.find((u) => u.id === id);
-  return user && { ...user };
+  const row = check(await supabase.from('users').select(USER_COLUMNS).eq('id', id).maybeSingle());
+  return row ? toUser(row) : undefined;
 }
 
-export async function updateProfile(
-  userId: string,
-  changes: Partial<Omit<User, 'id' | 'role' | 'status'>>
-): Promise<User> {
-  await delay();
-  const user = mock.users.find((u) => u.id === userId);
-  if (!user) throw new ApiError('User not found.');
-  // Resubmitting details after "needs_info" puts the user back in the queue.
-  Object.assign(user, changes, {
-    status: user.status === 'needs_info' ? 'pending' : user.status,
-    admin_note: undefined,
-  });
-  return { ...user };
+/** Fields a user may send when editing their own profile. */
+type ProfileChanges = Partial<
+  Pick<User, 'name' | 'phone' | 'block' | 'unit_number' | 'street' | 'skills' | 'notifications'>
+>;
+
+/** Resubmitting details after "needs_info" puts the user back in the queue. */
+export async function updateProfile(userId: string, changes: ProfileChanges): Promise<User> {
+  const current = await fetchProfile(userId);
+  const status = current.status === 'needs_info' ? 'pending' : current.status;
+  const row = check(
+    await supabase.from('users').update({ ...changes, status }).eq('id', userId).select(USER_COLUMNS).single()
+  );
+  return toUser(row);
 }
 
 // ─── Posting ──────────────────────────────────────────────────────────────
 
-/** Runs the AI pipeline on draft text (mock: keyword rules). */
+/** Runs the AI pipeline on draft text (mock: keyword rules, on the device). */
 export async function analyzePost(
   author: User,
   content: string,
@@ -113,305 +156,213 @@ export async function analyzePost(
 
 /** Approved neighbours in the author's estate who have the given skill. */
 export async function countSkillMatches(
-  author: User,
+  _author: User,
   category: PostAnalysis['category']
 ): Promise<number> {
-  return mock.users.filter(
-    (u) =>
-      u.id !== author.id &&
-      u.estate_id === author.estate_id &&
-      u.status === 'approved' &&
-      (u.skills as string[]).includes(category)
-  ).length;
+  return check(await supabase.rpc('count_skill_matches', { p_category: category })) ?? 0;
 }
 
-function newAlias(estateId: string) {
-  const taken = new Set(
-    mock.posts
-      .filter((p) => p.estate_id === estateId && p.author.kind === 'anonymous')
-      .map((p) => (p.author.kind === 'anonymous' ? p.author.alias : ''))
-  );
-  let alias: string;
-  do alias = `Neighbor #${100 + Math.floor(Math.random() * 900)}`;
-  while (taken.has(alias));
-  return alias;
+/**
+ * Uploads a photo picked on the device to the public `post-media` bucket.
+ * The path is "<estate>/<random>" — never the user id, which would reveal
+ * who wrote an anonymous post.
+ */
+async function uploadPostPhoto(author: User, uri: string): Promise<string> {
+  const res = await fetch(uri);
+  const body = await res.arrayBuffer();
+  const contentType = res.headers.get('content-type')?.split(';')[0] || 'image/jpeg';
+  const ext = contentType.split('/')[1]?.replace('jpeg', 'jpg') || 'jpg';
+  const path = `${author.estate_id}/${Date.now()}-${Math.random().toString(36).slice(2, 10)}.${ext}`;
+
+  const { error } = await supabase.storage.from('post-media').upload(path, body, { contentType });
+  if (error) throw new ApiError(`Couldn't upload the photo: ${error.message}`);
+  return supabase.storage.from('post-media').getPublicUrl(path).data.publicUrl;
 }
 
 export async function createPost(
   author: User,
   input: NewPostInput
 ): Promise<{ post: FeedPost; notified: number }> {
-  await delay(700);
   const analysis = analyzeText(input.content, input.is_anonymous ? undefined : author.block);
-  const stored: mock.StoredPost = {
-    id: `pst-${Date.now()}`,
-    estate_id: author.estate_id,
-    author_id: author.id,
-    author: input.is_anonymous
-      ? { kind: 'anonymous', alias: newAlias(author.estate_id) }
-      : { kind: 'public', name: author.name, block: author.block },
-    content: input.content.trim(),
-    media_url: input.media_uri,
-    analysis,
-    status: 'open',
-    helper_count: 0,
-    created_at: new Date().toISOString(),
-  };
-  mock.posts.unshift(stored);
-  const notified = await countSkillMatches(author, analysis.category);
-  return { post: toFeedPost(stored, author.id), notified };
+  const mediaUrl = input.media_uri ? await uploadPostPhoto(author, input.media_uri) : null;
+
+  // The server picks the anonymous alias and counts skill matches.
+  const result = check(
+    await supabase.rpc('create_post', {
+      p_content: input.content.trim(),
+      p_is_anonymous: input.is_anonymous,
+      p_media_url: mediaUrl,
+      p_category: analysis.category,
+      p_tools_needed: analysis.tools_needed,
+      p_urgency: analysis.urgency,
+      p_punchline: analysis.punchline,
+    })
+  ) as { id: string; notified: number };
+
+  const post = await getPost(author, result.id);
+  if (!post) throw new ApiError('Your request was posted but could not be loaded.');
+  return { post, notified: result.notified };
 }
 
 // ─── Feed ─────────────────────────────────────────────────────────────────
 
-/** Strips the private author_id, like the future `feed_posts` view will. */
-function toFeedPost({ author_id, ...post }: mock.StoredPost, viewerId: string): FeedPost {
-  return { ...post, is_mine: author_id === viewerId };
+/** Row shape of the `feed_posts` view (never includes the author's id). */
+interface FeedRow {
+  id: string;
+  estate_id: string;
+  content: string;
+  media_url: string | null;
+  category: string | null;
+  tools_needed: string[];
+  urgency: PostAnalysis['urgency'] | null;
+  punchline: string | null;
+  status: PostStatus;
+  created_at: string;
+  is_anonymous: boolean;
+  anon_alias: string | null;
+  author_name: string | null;
+  author_block: string | null;
+  is_mine: boolean;
+  helper_count: number;
 }
 
-export async function getFeed(viewer: User): Promise<FeedPost[]> {
-  await delay(600);
-  return mock.posts
-    .filter((p) => p.estate_id === viewer.estate_id)
-    .sort((a, b) => b.created_at.localeCompare(a.created_at))
-    .map((p) => toFeedPost(p, viewer.id));
+const toFeedPost = (r: FeedRow): FeedPost => ({
+  id: r.id,
+  estate_id: r.estate_id,
+  author: r.is_anonymous
+    ? { kind: 'anonymous', alias: r.anon_alias ?? 'Neighbour' }
+    : { kind: 'public', name: r.author_name ?? 'Neighbour', block: r.author_block ?? '?' },
+  is_mine: r.is_mine,
+  content: r.content,
+  media_url: r.media_url ?? undefined,
+  analysis:
+    r.category && r.urgency
+      ? {
+          category: r.category as PostAnalysis['category'],
+          tools_needed: r.tools_needed,
+          urgency: r.urgency,
+          punchline: r.punchline ?? '',
+        }
+      : undefined,
+  status: r.status,
+  helper_count: Number(r.helper_count),
+  created_at: r.created_at,
+});
+
+/** The viewer's estate feed, newest first (the view scopes it to their estate). */
+export async function getFeed(_viewer: User): Promise<FeedPost[]> {
+  const rows = check(
+    await supabase.from('feed_posts').select('*').order('created_at', { ascending: false })
+  ) as FeedRow[] | null;
+  return (rows ?? []).map(toFeedPost);
 }
 
-export async function getPost(viewer: User, postId: string): Promise<FeedPost | undefined> {
-  await delay(200);
-  const post = mock.posts.find((p) => p.id === postId && p.estate_id === viewer.estate_id);
-  return post && toFeedPost(post, viewer.id);
+export async function getPost(_viewer: User, postId: string): Promise<FeedPost | undefined> {
+  const row = check(
+    await supabase.from('feed_posts').select('*').eq('id', postId).maybeSingle()
+  ) as FeedRow | null;
+  return row ? toFeedPost(row) : undefined;
 }
 
 /** Author-only: move a request between open / in progress / resolved. */
 export async function updatePostStatus(
-  viewer: User,
+  _viewer: User,
   postId: string,
   status: PostStatus
 ): Promise<void> {
-  await delay(300);
-  const post = mock.posts.find((p) => p.id === postId);
-  if (!post || post.author_id !== viewer.id) throw new ApiError('You can only update your own requests.');
-  post.status = status;
+  const rows = check(
+    await supabase.from('posts').update({ status }).eq('id', postId).select('id')
+  );
+  if (!rows?.length) throw new ApiError('You can only update your own requests.');
 }
 
-/** Author-only: removes the request and its chats. */
-export async function deletePost(viewer: User, postId: string): Promise<void> {
-  await delay(300);
-  const idx = mock.posts.findIndex((p) => p.id === postId);
-  if (idx < 0 || mock.posts[idx].author_id !== viewer.id)
-    throw new ApiError('You can only delete your own requests.');
-  mock.posts.splice(idx, 1);
-  const convoIds = new Set(mock.conversations.filter((c) => c.post_id === postId).map((c) => c.id));
-  for (let i = mock.conversations.length - 1; i >= 0; i--)
-    if (convoIds.has(mock.conversations[i].id)) mock.conversations.splice(i, 1);
-  for (let i = mock.messages.length - 1; i >= 0; i--)
-    if (convoIds.has(mock.messages[i].conversation_id)) mock.messages.splice(i, 1);
+/** Author-only: removes the request; its chats are deleted with it. */
+export async function deletePost(_viewer: User, postId: string): Promise<void> {
+  const rows = check(await supabase.from('posts').delete().eq('id', postId).select('id'));
+  if (!rows?.length) throw new ApiError('You can only delete your own requests.');
 }
 
 /** Bulletins still pinned for the estate, newest first. */
-export async function getActiveBulletins(estateId: string): Promise<Bulletin[]> {
-  await delay(300);
+export async function getActiveBulletins(_estateId: string): Promise<Bulletin[]> {
   const now = new Date().toISOString();
-  return mock.bulletins
-    .filter((b) => b.estate_id === estateId && (!b.pinned_until || b.pinned_until > now))
-    .sort((a, b) => b.created_at.localeCompare(a.created_at));
+  const rows = check(
+    await supabase
+      .from('bulletins')
+      .select('*')
+      .or(`pinned_until.is.null,pinned_until.gt.${now}`)
+      .order('created_at', { ascending: false })
+  );
+  return (rows ?? []) as Bulletin[];
 }
 
 export async function createReport(
-  reporterId: string,
+  _reporterId: string,
   target_type: ReportTarget,
   target_id: string,
   reason: string
 ): Promise<void> {
-  await delay(300);
-  mock.reports.push({
-    id: `rpt-${Date.now()}`,
-    reporter_id: reporterId,
-    target_type,
-    target_id,
-    reason,
-    status: 'open',
-    created_at: new Date().toISOString(),
-  });
+  check(
+    await supabase.rpc('create_report', {
+      p_target_type: target_type,
+      p_target_id: target_id,
+      p_reason: reason,
+    })
+  );
 }
 
 // ─── Chat ─────────────────────────────────────────────────────────────────
+// Chats are read only through server functions: they label each message as
+// me / them / system, so an anonymous requester's user id never reaches the
+// helper's device.
 
-// Mock stand-in for Supabase Realtime: screens subscribe to a conversation
-// and get called whenever a message is added to it.
-const chatListeners = new Map<string, Set<() => void>>();
-
+/**
+ * Calls `onChange` whenever a message is added to the conversation. The
+ * server sends an empty "changed" ping on channel `chat:<id>`; the screen
+ * then refetches through getConversation.
+ */
 export function subscribeToConversation(conversationId: string, onChange: () => void) {
-  const set = chatListeners.get(conversationId) ?? new Set();
-  set.add(onChange);
-  chatListeners.set(conversationId, set);
+  const channel = supabase
+    .channel(`chat:${conversationId}`)
+    .on('broadcast', { event: 'changed' }, () => onChange())
+    .subscribe();
   return () => {
-    set.delete(onChange);
+    void supabase.removeChannel(channel);
   };
 }
 
-function emit(conversationId: string) {
-  chatListeners.get(conversationId)?.forEach((fn) => fn());
-}
-
-const findUser = (id: string) => mock.users.find((u) => u.id === id);
-const findPost = (id: string) => mock.posts.find((p) => p.id === id);
-
-/** Helpers are always public; requesters stay anonymous until they share. */
-function peerFor(viewer: User, conv: Conversation): ChatPeer {
-  const isRequester = conv.requester_id === viewer.id;
-  const peer = findUser(isRequester ? conv.helper_id : conv.requester_id);
-  const post = findPost(conv.post_id);
-  if (!isRequester && post?.author.kind === 'anonymous' && !conv.is_identity_revealed) {
-    return { kind: 'anonymous', alias: post.author.alias };
-  }
-  return { kind: 'public', name: peer?.name ?? 'Neighbour', block: peer?.block ?? '?' };
-}
-
-function toChatMessage(m: Message, viewerId: string): ChatMessage {
-  const { sender_id, conversation_id, ...rest } = m;
-  return { ...rest, from: m.type === 'system' ? 'system' : sender_id === viewerId ? 'me' : 'them' };
-}
-
-function summarize(conv: Conversation, viewer: User): ConversationSummary {
-  const post = findPost(conv.post_id);
-  const msgs = mock.messages.filter((m) => m.conversation_id === conv.id);
-  const last = msgs[msgs.length - 1];
-  return {
-    id: conv.id,
-    post_id: conv.post_id,
-    post_title: post?.analysis?.punchline ?? post?.content.slice(0, 60) ?? 'Request',
-    my_role: conv.requester_id === viewer.id ? 'requester' : 'helper',
-    peer: peerFor(viewer, conv),
-    is_anonymous_post: post?.author.kind === 'anonymous',
-    is_identity_revealed: conv.is_identity_revealed,
-    last_message: last && toChatMessage(last, viewer.id),
-    updated_at: last?.created_at ?? conv.created_at,
-  };
-}
-
-function participantConversation(viewer: User, conversationId: string) {
-  const conv = mock.conversations.find((c) => c.id === conversationId);
-  if (!conv || (conv.requester_id !== viewer.id && conv.helper_id !== viewer.id)) {
-    throw new ApiError('Conversation not found.');
-  }
-  return conv;
-}
-
-function addMessage(conv: Conversation, senderId: string, fields: Partial<Message>) {
-  mock.messages.push({
-    id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-    conversation_id: conv.id,
-    sender_id: senderId,
-    type: 'text',
-    created_at: new Date().toISOString(),
-    ...fields,
-  });
-  emit(conv.id);
-}
-
-export async function getConversations(viewer: User): Promise<ConversationSummary[]> {
-  await delay(300);
-  return mock.conversations
-    .filter((c) => c.requester_id === viewer.id || c.helper_id === viewer.id)
-    .map((c) => summarize(c, viewer))
-    .sort((a, b) => b.updated_at.localeCompare(a.updated_at));
+export async function getConversations(_viewer: User): Promise<ConversationSummary[]> {
+  return (check(await supabase.rpc('get_my_conversations')) ?? []) as ConversationSummary[];
 }
 
 export async function getConversation(
-  viewer: User,
+  _viewer: User,
   conversationId: string
 ): Promise<{ summary: ConversationSummary; messages: ChatMessage[] }> {
-  const conv = participantConversation(viewer, conversationId);
-  return {
-    summary: summarize(conv, viewer),
-    messages: mock.messages
-      .filter((m) => m.conversation_id === conv.id)
-      .map((m) => toChatMessage(m, viewer.id)),
+  return check(await supabase.rpc('get_conversation', { p_id: conversationId })) as {
+    summary: ConversationSummary;
+    messages: ChatMessage[];
   };
 }
 
 /** Opens (or reuses) the helper's 1-to-1 chat with the post's author. */
-export async function offerHelp(viewer: User, postId: string): Promise<string> {
-  await delay(300);
-  const post = findPost(postId);
-  if (!post || post.estate_id !== viewer.estate_id) throw new ApiError('Post not found.');
-  if (post.author_id === viewer.id) throw new ApiError("You can't offer help on your own post.");
-
-  const existing = mock.conversations.find(
-    (c) => c.post_id === postId && c.helper_id === viewer.id
-  );
-  if (existing) return existing.id;
-
-  const conv: Conversation = {
-    id: `cnv-${Date.now()}`,
-    post_id: postId,
-    requester_id: post.author_id,
-    helper_id: viewer.id,
-    is_identity_revealed: false,
-    created_at: new Date().toISOString(),
-  };
-  mock.conversations.push(conv);
-  post.helper_count += 1;
-  addMessage(conv, viewer.id, {
-    type: 'system',
-    text: `${viewer.name} offered to help with this request.`,
-  });
-  return conv.id;
+export async function offerHelp(_viewer: User, postId: string): Promise<string> {
+  return check(await supabase.rpc('offer_help', { p_post_id: postId })) as string;
 }
 
-export async function sendMessage(viewer: User, conversationId: string, text: string) {
-  const conv = participantConversation(viewer, conversationId);
-  addMessage(conv, viewer.id, { text: text.trim() });
-  scheduleMockReply(conv, viewer.id);
+export async function sendMessage(_viewer: User, conversationId: string, text: string) {
+  check(await supabase.rpc('send_message', { p_conversation_id: conversationId, p_text: text }));
 }
 
-/** Posts the viewer's verified contact card into the chat. */
-export async function shareIdentity(viewer: User, conversationId: string) {
-  await delay(300);
-  const conv = participantConversation(viewer, conversationId);
-  if (conv.requester_id === viewer.id) conv.is_identity_revealed = true;
-  addMessage(conv, viewer.id, {
-    type: 'identity_card',
-    identity_card: {
-      name: viewer.name,
-      block: viewer.block,
-      unit_number: viewer.unit_number,
-      phone: viewer.phone,
-    },
-  });
+/** Posts the viewer's verified contact card (built server-side) into the chat. */
+export async function shareIdentity(_viewer: User, conversationId: string) {
+  check(await supabase.rpc('share_identity', { p_conversation_id: conversationId }));
 }
 
 /** Reports the other participant; their user id is resolved server-side. */
-export async function reportChatPeer(viewer: User, conversationId: string, reason: string) {
-  const conv = participantConversation(viewer, conversationId);
-  const peerId = conv.requester_id === viewer.id ? conv.helper_id : conv.requester_id;
-  await createReport(viewer.id, 'user', peerId, reason);
-}
-
-// Scripted replies so the chat feels alive until real users are connected.
-const MOCK_REPLIES = {
-  fromHelper: [
-    'Sure! What time works best for you?',
-    "Okay, I'll bring what I need.",
-    'On my way 👍',
-  ],
-  fromRequester: [
-    'Thank you so much, that would really help! 🙏',
-    'Is later this evening okay for you?',
-    'Great, see you then!',
-  ],
-};
-
-function scheduleMockReply(conv: Conversation, viewerId: string) {
-  const peerId = conv.requester_id === viewerId ? conv.helper_id : conv.requester_id;
-  const script = peerId === conv.helper_id ? MOCK_REPLIES.fromHelper : MOCK_REPLIES.fromRequester;
-  const sent = mock.messages.filter(
-    (m) => m.conversation_id === conv.id && m.sender_id === peerId && m.type === 'text'
-  ).length;
-  const reply = script[sent % script.length];
-  setTimeout(() => addMessage(conv, peerId, { text: reply }), 1500 + Math.random() * 1000);
+export async function reportChatPeer(_viewer: User, conversationId: string, reason: string) {
+  check(
+    await supabase.rpc('report_chat_peer', { p_conversation_id: conversationId, p_reason: reason })
+  );
 }
 
 /**
@@ -422,29 +373,16 @@ export async function updatePreferences(
   userId: string,
   changes: Partial<Pick<User, 'phone' | 'skills' | 'notifications'>>
 ): Promise<User> {
-  await delay(300);
-  const user = mock.users.find((u) => u.id === userId);
-  if (!user) throw new ApiError('User not found.');
-  Object.assign(user, changes);
-  return { ...user };
-}
-
-/** Dev-only: simulates the admin acting on a registration. */
-export async function devSetStatus(
-  userId: string,
-  status: User['status'],
-  admin_note?: string
-): Promise<User> {
-  await delay(150);
-  const user = mock.users.find((u) => u.id === userId);
-  if (!user) throw new ApiError('User not found.');
-  user.status = status;
-  user.admin_note = admin_note;
-  return { ...user };
+  const row = check(
+    await supabase.from('users').update(changes).eq('id', userId).select(USER_COLUMNS).single()
+  );
+  return toUser(row);
 }
 
 
 // ─── Management (staff only) ──────────────────────────────────────────────
+// Row-level security already limits staff to their own estate, and only
+// admins may change other users; these checks just give friendlier errors.
 
 function assertStaff(viewer: User) {
   if (!isStaff(viewer)) throw new ApiError('Staff access only.');
@@ -454,36 +392,57 @@ function assertAdmin(viewer: User) {
   if (!isAdmin(viewer)) throw new ApiError('Admin access only.');
 }
 
-const estateResidents = (viewer: User) =>
-  mock.users.filter((u) => u.role === 'resident' && u.estate_id === viewer.estate_id);
+/** Number of rows matching a query, without downloading them. */
+async function countRows(
+  query: PromiseLike<{ count: number | null; error: { message: string } | null }>
+): Promise<number> {
+  const { count, error } = await query;
+  if (error) throw new ApiError(error.message);
+  return count ?? 0;
+}
 
-/** Accounts an admin looks after: residents and management staff (not admins). */
-const estateManaged = (viewer: User) =>
-  mock.users.filter((u) => u.role !== 'admin' && u.estate_id === viewer.estate_id);
+const countUsers = (estateId: string) =>
+  supabase.from('users').select('id', { count: 'exact', head: true }).eq('estate_id', estateId);
+const countReports = (status: ReportStatus) =>
+  supabase.from('reports').select('id', { count: 'exact', head: true }).eq('status', status);
+const activeBulletinFilter = () =>
+  `pinned_until.is.null,pinned_until.gt.${new Date().toISOString()}`;
 
 export async function getManagementOverview(viewer: User): Promise<ManagementOverview> {
   assertStaff(viewer);
-  await delay(250);
-  const residents = estateResidents(viewer);
-  const now = new Date().toISOString();
+  const [pending, open, investigating, bulletins, residents] = await Promise.all([
+    countRows(countUsers(viewer.estate_id).eq('role', 'resident').eq('status', 'pending')),
+    countRows(countReports('open')),
+    countRows(countReports('investigating')),
+    countRows(
+      supabase
+        .from('bulletins')
+        .select('id', { count: 'exact', head: true })
+        .or(activeBulletinFilter())
+    ),
+    countRows(countUsers(viewer.estate_id).eq('role', 'resident').eq('status', 'approved')),
+  ]);
   return {
-    pending_residents: residents.filter((u) => u.status === 'pending').length,
-    open_reports: mock.reports.filter((r) => r.status === 'open').length,
-    investigating_reports: mock.reports.filter((r) => r.status === 'investigating').length,
-    active_bulletins: mock.bulletins.filter(
-      (b) => b.estate_id === viewer.estate_id && (!b.pinned_until || b.pinned_until > now)
-    ).length,
-    resident_count: residents.filter((u) => u.status === 'approved').length,
+    pending_residents: pending,
+    open_reports: open,
+    investigating_reports: investigating,
+    active_bulletins: bulletins,
+    resident_count: residents,
   };
 }
 
 /** Residents and management staff of the admin's estate, newest first. */
 export async function getResidents(viewer: User): Promise<User[]> {
   assertAdmin(viewer);
-  await delay(300);
-  return estateManaged(viewer)
-    .sort((a, b) => b.created_at.localeCompare(a.created_at))
-    .map((u) => ({ ...u }));
+  const rows = check(
+    await supabase
+      .from('users')
+      .select(USER_COLUMNS)
+      .eq('estate_id', viewer.estate_id)
+      .neq('role', 'admin')
+      .order('created_at', { ascending: false })
+  );
+  return (rows ?? []).map(toUser);
 }
 
 /** Approve, ask for more info, reject, suspend or reinstate a resident. */
@@ -494,56 +453,26 @@ export async function reviewResident(
   note?: string
 ): Promise<User> {
   assertAdmin(viewer);
-  await delay(300);
-  const user = estateManaged(viewer).find((u) => u.id === userId);
-  if (!user) throw new ApiError('User not found.');
   if (status === 'needs_info' && !note?.trim()) {
     throw new ApiError('Tell the resident what information you need.');
   }
-  user.status = status;
-  user.admin_note = status === 'approved' ? undefined : note?.trim() || undefined;
-  return { ...user };
-}
-
-function describeTarget(r: Report): { excerpt: string; offenderId?: string; postExists: boolean } {
-  if (r.target_type === 'post') {
-    const post = mock.posts.find((p) => p.id === r.target_id);
-    return post
-      ? { excerpt: post.content, offenderId: post.author_id, postExists: true }
-      : { excerpt: 'This post has been removed.', postExists: false };
-  }
-  if (r.target_type === 'message') {
-    const msg = mock.messages.find((m) => m.id === r.target_id);
-    return msg
-      ? { excerpt: msg.text ?? 'Shared details card', offenderId: msg.sender_id, postExists: false }
-      : { excerpt: 'This message is no longer available.', postExists: false };
-  }
-  const u = mock.users.find((x) => x.id === r.target_id);
-  return { excerpt: u ? `Account: ${u.name}` : 'Unknown account', offenderId: u?.id, postExists: false };
+  const admin_note = status === 'approved' ? null : note?.trim() || null;
+  const row = check(
+    await supabase
+      .from('users')
+      .update({ status, admin_note })
+      .eq('id', userId)
+      .select(USER_COLUMNS)
+      .maybeSingle()
+  );
+  if (!row) throw new ApiError('User not found.');
+  return toUser(row);
 }
 
 /** Report queue with context. Staff can see who is behind anonymous posts. */
 export async function getReports(viewer: User): Promise<ReportDetail[]> {
   assertStaff(viewer);
-  await delay(300);
-  return mock.reports
-    .map((report): ReportDetail => {
-      const { excerpt, offenderId, postExists } = describeTarget(report);
-      const offender = mock.users.find((u) => u.id === offenderId);
-      return {
-        report: { ...report },
-        reporter_name: mock.users.find((u) => u.id === report.reporter_id)?.name ?? 'Unknown',
-        target_excerpt: excerpt,
-        offender: offender && {
-          id: offender.id,
-          name: offender.name,
-          block: offender.block,
-          status: offender.status,
-        },
-        post_exists: postExists,
-      };
-    })
-    .sort((a, b) => b.report.created_at.localeCompare(a.report.created_at));
+  return (check(await supabase.rpc('get_report_details')) ?? []) as ReportDetail[];
 }
 
 export async function updateReportStatus(
@@ -552,11 +481,7 @@ export async function updateReportStatus(
   status: ReportStatus
 ): Promise<void> {
   assertStaff(viewer);
-  await delay(200);
-  const report = mock.reports.find((r) => r.id === reportId);
-  if (!report) throw new ApiError('Report not found.');
-  report.status = status;
-  report.handled_by = viewer.id;
+  check(await supabase.rpc('set_report_status', { p_report_id: reportId, p_status: status }));
 }
 
 export type ModerationAction = 'delete_post' | 'warn_user' | 'suspend_user';
@@ -568,43 +493,18 @@ export async function moderate(
   action: ModerationAction
 ): Promise<string> {
   assertStaff(viewer);
-  await delay(300);
-  const report = mock.reports.find((r) => r.id === reportId);
-  if (!report) throw new ApiError('Report not found.');
-  const { offenderId } = describeTarget(report);
-  const offender = estateResidents(viewer).find((u) => u.id === offenderId);
-  let outcome: string;
-
-  if (action === 'delete_post') {
-    const index = mock.posts.findIndex((p) => p.id === report.target_id);
-    if (index < 0) throw new ApiError('That post is already gone.');
-    mock.posts.splice(index, 1);
-    outcome = 'Post deleted';
-  } else {
-    if (!offender) throw new ApiError('No resident account is linked to this report.');
-    if (action === 'warn_user') {
-      offender.warning_count = (offender.warning_count ?? 0) + 1;
-      outcome = `Warning issued to ${offender.name}`;
-    } else {
-      offender.status = 'suspended';
-      offender.admin_note = 'Suspended after a community report.';
-      outcome = `${offender.name} suspended`;
-    }
-  }
-  report.status = 'resolved';
-  report.handled_by = viewer.id;
-  report.resolution_note = outcome;
-  return outcome;
+  return check(
+    await supabase.rpc('moderate', { p_report_id: reportId, p_action: action })
+  ) as string;
 }
 
 /** Every bulletin for the estate, including expired ones. */
 export async function getAllBulletins(viewer: User): Promise<Bulletin[]> {
   assertStaff(viewer);
-  await delay(250);
-  return mock.bulletins
-    .filter((b) => b.estate_id === viewer.estate_id)
-    .sort((a, b) => b.created_at.localeCompare(a.created_at))
-    .map((b) => ({ ...b }));
+  const rows = check(
+    await supabase.from('bulletins').select('*').order('created_at', { ascending: false })
+  );
+  return (rows ?? []) as Bulletin[];
 }
 
 const toMinutes = (hhmm: string) => {
@@ -612,7 +512,7 @@ const toMinutes = (hhmm: string) => {
   return h * 60 + m;
 };
 
-function inQuietHours(user: User, now = new Date()) {
+function inQuietHours(user: Pick<User, 'notifications'>, now = new Date()) {
   const { enabled, start, end } = user.notifications.quiet_hours;
   if (!enabled) return false;
   const t = now.getHours() * 60 + now.getMinutes();
@@ -622,42 +522,49 @@ function inQuietHours(user: User, now = new Date()) {
 
 /**
  * Publishes a notice. Important notices bypass quiet hours; ordinary ones are
- * held back for residents who are currently muted. Mock push: counts only.
+ * held back for residents who are currently muted. Push isn't wired up yet,
+ * so this returns the counts only.
  */
 export async function publishBulletin(
   viewer: User,
   input: BulletinInput
 ): Promise<{ bulletin: Bulletin; notified: number; held_back: number }> {
   assertStaff(viewer);
-  await delay(500);
   const title = input.title.trim();
   const body = input.body.trim();
   if (!title || !body) throw new ApiError('Add a title and a message.');
 
-  const bulletin: Bulletin = {
-    id: `blt-${Date.now()}`,
-    estate_id: viewer.estate_id,
-    admin_id: viewer.id,
-    title,
-    body,
-    is_high_priority: input.is_high_priority,
-    pinned_until: new Date(Date.now() + input.pin_days * 86_400_000).toISOString(),
-    created_at: new Date().toISOString(),
-  };
-  mock.bulletins.unshift(bulletin);
+  const bulletin = check(
+    await supabase
+      .from('bulletins')
+      .insert({
+        estate_id: viewer.estate_id,
+        admin_id: viewer.id,
+        title,
+        body,
+        is_high_priority: input.is_high_priority,
+        pinned_until: new Date(Date.now() + input.pin_days * 86_400_000).toISOString(),
+      })
+      .select('*')
+      .single()
+  ) as Bulletin;
 
-  const audience = estateResidents(viewer).filter((u) => u.status === 'approved');
+  const audience = (check(
+    await supabase
+      .from('users')
+      .select('notifications')
+      .eq('estate_id', viewer.estate_id)
+      .eq('role', 'resident')
+      .eq('status', 'approved')
+  ) ?? []) as Pick<User, 'notifications'>[];
   const held = input.is_high_priority ? [] : audience.filter((u) => inQuietHours(u));
   return { bulletin, notified: audience.length - held.length, held_back: held.length };
 }
 
 export async function deleteBulletin(viewer: User, bulletinId: string): Promise<void> {
   assertStaff(viewer);
-  await delay(200);
-  const index = mock.bulletins.findIndex((b) => b.id === bulletinId);
-  if (index >= 0) mock.bulletins.splice(index, 1);
+  check(await supabase.from('bulletins').delete().eq('id', bulletinId));
 }
-
 
 // ─── Admin (user list management) ─────────────────────────────────────────
 
@@ -672,16 +579,22 @@ export interface AdminOverview {
 
 export async function getAdminOverview(viewer: User): Promise<AdminOverview> {
   assertAdmin(viewer);
-  await delay(250);
-  const residents = estateResidents(viewer);
-  const count = (...s: User['status'][]) => residents.filter((u) => s.includes(u.status)).length;
+  const residents = () => countUsers(viewer.estate_id).eq('role', 'resident');
+  const [pending, approved, restricted, staff, open, investigating] = await Promise.all([
+    countRows(residents().in('status', ['pending', 'needs_info'])),
+    countRows(residents().eq('status', 'approved')),
+    countRows(residents().in('status', ['rejected', 'suspended'])),
+    countRows(countUsers(viewer.estate_id).eq('role', 'management')),
+    countRows(countReports('open')),
+    countRows(countReports('investigating')),
+  ]);
   return {
-    pending: count('pending', 'needs_info'),
-    approved: count('approved'),
-    restricted: count('rejected', 'suspended'),
-    staff: estateManaged(viewer).filter((u) => u.role === 'management').length,
-    open_reports: mock.reports.filter((r) => r.status === 'open').length,
-    investigating_reports: mock.reports.filter((r) => r.status === 'investigating').length,
+    pending,
+    approved,
+    restricted,
+    staff,
+    open_reports: open,
+    investigating_reports: investigating,
   };
 }
 
@@ -717,33 +630,18 @@ const cleanUserInput = (input: AdminUserInput): AdminUserInput => ({
 });
 
 /**
- * Adds a resident or a management account directly. Both are pre-verified,
- * so they start approved.
+ * Adds a resident or a management account directly. Creating someone else's
+ * login needs the secret key, so this will call an Edge Function (next step).
  */
 export async function adminCreateUser(
   viewer: User,
   input: AdminUserInput & { password: string; role?: 'resident' | 'management' }
 ): Promise<User> {
   assertAdmin(viewer);
-  await delay(400);
   validateAdminUser(input);
-  if (input.password.length < 8) throw new ApiError('Use a password of at least 8 characters.');
-  const data = cleanUserInput(input);
-  if (mock.users.some((u) => u.email === data.email)) {
-    throw new ApiError('An account with this email already exists.');
-  }
-  const user: User = {
-    ...data,
-    estate_id: viewer.estate_id,
-    notifications: DEFAULT_NOTIFICATIONS,
-    id: `usr-${Date.now()}`,
-    role: input.role ?? 'resident',
-    status: 'approved',
-    created_at: new Date().toISOString(),
-  };
-  mock.users.push(user);
-  mock.passwords[data.email] = input.password;
-  return { ...user };
+  throw new ApiError(
+    'Adding accounts from the app isn’t available yet. Ask the person to sign up in the app, then approve them here.'
+  );
 }
 
 /** Edits a resident's or manager's details (not their role, status or password). */
@@ -753,55 +651,37 @@ export async function adminUpdateUser(
   input: AdminUserInput
 ): Promise<User> {
   assertAdmin(viewer);
-  await delay(300);
-  const user = estateManaged(viewer).find((u) => u.id === userId);
-  if (!user) throw new ApiError('User not found.');
   validateAdminUser(input);
-  const data = cleanUserInput(input);
-  if (data.email !== user.email) {
-    if (mock.users.some((u) => u.email === data.email)) {
-      throw new ApiError('Another account already uses this email.');
-    }
-    // Keep the mock sign-in credentials attached to the new email.
-    mock.passwords[data.email] = mock.passwords[user.email];
-    delete mock.passwords[user.email];
+  const { email, ...details } = cleanUserInput(input);
+  const current = check(
+    await supabase.from('users').select('email').eq('id', userId).maybeSingle()
+  );
+  if (!current) throw new ApiError('User not found.');
+  // The email is also the login, which only the server (secret key) can change.
+  if (current.email !== email) {
+    throw new ApiError('Changing someone’s email isn’t supported yet. Edit the other details only.');
   }
-  Object.assign(user, data);
-  return { ...user };
+  const row = check(
+    await supabase
+      .from('users')
+      .update(details)
+      .eq('id', userId)
+      .select(USER_COLUMNS)
+      .maybeSingle()
+  );
+  if (!row) throw new ApiError('User not found.');
+  return toUser(row);
 }
 
-/** Permanently removes a resident along with their posts and chats. */
+/** Permanently removes a resident or manager along with their posts and chats. */
 export async function adminDeleteUser(viewer: User, userId: string): Promise<void> {
   assertAdmin(viewer);
-  await delay(300);
-  const user = estateManaged(viewer).find((u) => u.id === userId);
-  if (!user) throw new ApiError('User not found.');
-  purgeUser(user);
+  check(await supabase.rpc('admin_delete_user', { p_user_id: userId }));
 }
 
 /** Lets a resident delete their own account and everything they posted. */
 export async function deleteOwnAccount(viewer: User): Promise<void> {
-  await delay(400);
   if (viewer.role !== 'resident') throw new ApiError('Staff accounts are removed by an admin.');
-  const user = mock.users.find((u) => u.id === viewer.id);
-  if (!user) throw new ApiError('User not found.');
-  purgeUser(user);
+  check(await supabase.rpc('delete_own_account'));
+  await signOut();
 }
-
-function purgeUser(user: User) {
-  const userId = user.id;
-  const gone = new Set(
-    mock.conversations
-      .filter((c) => c.requester_id === userId || c.helper_id === userId)
-      .map((c) => c.id)
-  );
-  const keep = <T>(list: T[], pred: (item: T) => boolean) => {
-    for (let i = list.length - 1; i >= 0; i--) if (!pred(list[i])) list.splice(i, 1);
-  };
-  keep(mock.messages, (m) => !gone.has(m.conversation_id));
-  keep(mock.conversations, (c) => !gone.has(c.id));
-  keep(mock.posts, (p) => p.author_id !== userId);
-  keep(mock.users, (u) => u.id !== userId);
-  delete mock.passwords[user.email];
-}
-

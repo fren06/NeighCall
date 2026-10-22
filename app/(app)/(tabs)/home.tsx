@@ -1,7 +1,7 @@
 import { BulletinBanner } from '@/components/feed/BulletinBanner';
 import { PostCard, PostCardSkeleton } from '@/components/feed/PostCard';
 import { Button, ButtonText } from '@/components/ui/button';
-import { Fab, FabIcon, FabLabel } from '@/components/ui/fab';
+import { Fab, FabIcon } from '@/components/ui/fab';
 import { Heading } from '@/components/ui/heading';
 import { Icon } from '@/components/ui/icon';
 import { Pressable } from '@/components/ui/pressable';
@@ -188,12 +188,11 @@ export default function Home() {
       <Fab
         size="lg"
         placement="bottom right"
-        className="bg-brand shadow-lg"
+        className="h-14 w-14 bg-brand p-0 shadow-lg"
         onPress={() => router.push('/new-post')}
         accessibilityLabel="Ask for help"
       >
-        <FabIcon as={Plus} className="text-brand-foreground" />
-        <FabLabel className="font-semibold text-brand-foreground">Ask for help</FabLabel>
+        <FabIcon as={Plus} className="h-6 w-6 text-brand-foreground" />
       </Fab>
     </SafeAreaView>
   );
