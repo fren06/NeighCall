@@ -149,9 +149,9 @@ export async function updateProfile(userId: string, changes: ProfileChanges): Pr
   return toUser(row);
 }
 
-// ─── Posting ──────────────────────────────────────────────────────────────
+// ─── Posting (Supabase) ───────────────────────────────────────────────────
 
-/** Runs the AI pipeline on draft text (mock: keyword rules). */
+/** Runs the AI pipeline on draft text (mock: keyword rules, on the device). */
 export async function analyzePost(
   author: User,
   content: string,
@@ -163,109 +163,143 @@ export async function analyzePost(
 
 /** Approved neighbours in the author's estate who have the given skill. */
 export async function countSkillMatches(
-  author: User,
+  _author: User,
   category: PostAnalysis['category']
 ): Promise<number> {
-  return mock.users.filter(
-    (u) =>
-      u.id !== author.id &&
-      u.estate_id === author.estate_id &&
-      u.status === 'approved' &&
-      (u.skills as string[]).includes(category)
-  ).length;
+  return check(await supabase.rpc('count_skill_matches', { p_category: category })) ?? 0;
 }
 
-function newAlias(estateId: string) {
-  const taken = new Set(
-    mock.posts
-      .filter((p) => p.estate_id === estateId && p.author.kind === 'anonymous')
-      .map((p) => (p.author.kind === 'anonymous' ? p.author.alias : ''))
-  );
-  let alias: string;
-  do alias = `Neighbor #${100 + Math.floor(Math.random() * 900)}`;
-  while (taken.has(alias));
-  return alias;
+/**
+ * Uploads a photo picked on the device to the public `post-media` bucket.
+ * The path is "<estate>/<random>" — never the user id, which would reveal
+ * who wrote an anonymous post.
+ */
+async function uploadPostPhoto(author: User, uri: string): Promise<string> {
+  const res = await fetch(uri);
+  const body = await res.arrayBuffer();
+  const contentType = res.headers.get('content-type')?.split(';')[0] || 'image/jpeg';
+  const ext = contentType.split('/')[1]?.replace('jpeg', 'jpg') || 'jpg';
+  const path = `${author.estate_id}/${Date.now()}-${Math.random().toString(36).slice(2, 10)}.${ext}`;
+
+  const { error } = await supabase.storage.from('post-media').upload(path, body, { contentType });
+  if (error) throw new ApiError(`Couldn't upload the photo: ${error.message}`);
+  return supabase.storage.from('post-media').getPublicUrl(path).data.publicUrl;
 }
 
 export async function createPost(
   author: User,
   input: NewPostInput
 ): Promise<{ post: FeedPost; notified: number }> {
-  await delay(700);
   const analysis = analyzeText(input.content, input.is_anonymous ? undefined : author.block);
-  const stored: mock.StoredPost = {
-    id: `pst-${Date.now()}`,
-    estate_id: author.estate_id,
-    author_id: author.id,
-    author: input.is_anonymous
-      ? { kind: 'anonymous', alias: newAlias(author.estate_id) }
-      : { kind: 'public', name: author.name, block: author.block },
-    content: input.content.trim(),
-    media_url: input.media_uri,
-    analysis,
-    status: 'open',
-    helper_count: 0,
-    created_at: new Date().toISOString(),
-  };
-  mock.posts.unshift(stored);
-  const notified = await countSkillMatches(author, analysis.category);
-  return { post: toFeedPost(stored, author.id), notified };
+  const mediaUrl = input.media_uri ? await uploadPostPhoto(author, input.media_uri) : null;
+
+  // The server picks the anonymous alias and counts skill matches.
+  const result = check(
+    await supabase.rpc('create_post', {
+      p_content: input.content.trim(),
+      p_is_anonymous: input.is_anonymous,
+      p_media_url: mediaUrl,
+      p_category: analysis.category,
+      p_tools_needed: analysis.tools_needed,
+      p_urgency: analysis.urgency,
+      p_punchline: analysis.punchline,
+    })
+  ) as { id: string; notified: number };
+
+  const post = await getPost(author, result.id);
+  if (!post) throw new ApiError('Your request was posted but could not be loaded.');
+  return { post, notified: result.notified };
 }
 
-// ─── Feed ─────────────────────────────────────────────────────────────────
+// ─── Feed (Supabase) ──────────────────────────────────────────────────────
 
-/** Strips the private author_id, like the future `feed_posts` view will. */
-function toFeedPost({ author_id, ...post }: mock.StoredPost, viewerId: string): FeedPost {
-  return { ...post, is_mine: author_id === viewerId };
+/** Row shape of the `feed_posts` view (never includes the author's id). */
+interface FeedRow {
+  id: string;
+  estate_id: string;
+  content: string;
+  media_url: string | null;
+  category: string | null;
+  tools_needed: string[];
+  urgency: PostAnalysis['urgency'] | null;
+  punchline: string | null;
+  status: PostStatus;
+  created_at: string;
+  is_anonymous: boolean;
+  anon_alias: string | null;
+  author_name: string | null;
+  author_block: string | null;
+  is_mine: boolean;
+  helper_count: number;
 }
 
-export async function getFeed(viewer: User): Promise<FeedPost[]> {
-  await delay(600);
-  return mock.posts
-    .filter((p) => p.estate_id === viewer.estate_id)
-    .sort((a, b) => b.created_at.localeCompare(a.created_at))
-    .map((p) => toFeedPost(p, viewer.id));
+const toFeedPost = (r: FeedRow): FeedPost => ({
+  id: r.id,
+  estate_id: r.estate_id,
+  author: r.is_anonymous
+    ? { kind: 'anonymous', alias: r.anon_alias ?? 'Neighbour' }
+    : { kind: 'public', name: r.author_name ?? 'Neighbour', block: r.author_block ?? '?' },
+  is_mine: r.is_mine,
+  content: r.content,
+  media_url: r.media_url ?? undefined,
+  analysis:
+    r.category && r.urgency
+      ? {
+          category: r.category as PostAnalysis['category'],
+          tools_needed: r.tools_needed,
+          urgency: r.urgency,
+          punchline: r.punchline ?? '',
+        }
+      : undefined,
+  status: r.status,
+  helper_count: Number(r.helper_count),
+  created_at: r.created_at,
+});
+
+/** The viewer's estate feed, newest first (the view scopes it to their estate). */
+export async function getFeed(_viewer: User): Promise<FeedPost[]> {
+  const rows = check(
+    await supabase.from('feed_posts').select('*').order('created_at', { ascending: false })
+  ) as FeedRow[] | null;
+  return (rows ?? []).map(toFeedPost);
 }
 
-export async function getPost(viewer: User, postId: string): Promise<FeedPost | undefined> {
-  await delay(200);
-  const post = mock.posts.find((p) => p.id === postId && p.estate_id === viewer.estate_id);
-  return post && toFeedPost(post, viewer.id);
+export async function getPost(_viewer: User, postId: string): Promise<FeedPost | undefined> {
+  const row = check(
+    await supabase.from('feed_posts').select('*').eq('id', postId).maybeSingle()
+  ) as FeedRow | null;
+  return row ? toFeedPost(row) : undefined;
 }
 
 /** Author-only: move a request between open / in progress / resolved. */
 export async function updatePostStatus(
-  viewer: User,
+  _viewer: User,
   postId: string,
   status: PostStatus
 ): Promise<void> {
-  await delay(300);
-  const post = mock.posts.find((p) => p.id === postId);
-  if (!post || post.author_id !== viewer.id) throw new ApiError('You can only update your own requests.');
-  post.status = status;
+  const rows = check(
+    await supabase.from('posts').update({ status }).eq('id', postId).select('id')
+  );
+  if (!rows?.length) throw new ApiError('You can only update your own requests.');
 }
 
-/** Author-only: removes the request and its chats. */
-export async function deletePost(viewer: User, postId: string): Promise<void> {
-  await delay(300);
-  const idx = mock.posts.findIndex((p) => p.id === postId);
-  if (idx < 0 || mock.posts[idx].author_id !== viewer.id)
-    throw new ApiError('You can only delete your own requests.');
-  mock.posts.splice(idx, 1);
-  const convoIds = new Set(mock.conversations.filter((c) => c.post_id === postId).map((c) => c.id));
-  for (let i = mock.conversations.length - 1; i >= 0; i--)
-    if (convoIds.has(mock.conversations[i].id)) mock.conversations.splice(i, 1);
-  for (let i = mock.messages.length - 1; i >= 0; i--)
-    if (convoIds.has(mock.messages[i].conversation_id)) mock.messages.splice(i, 1);
+/** Author-only: removes the request; its chats are deleted with it. */
+export async function deletePost(_viewer: User, postId: string): Promise<void> {
+  const rows = check(await supabase.from('posts').delete().eq('id', postId).select('id'));
+  if (!rows?.length) throw new ApiError('You can only delete your own requests.');
 }
 
 /** Bulletins still pinned for the estate, newest first. */
-export async function getActiveBulletins(estateId: string): Promise<Bulletin[]> {
-  await delay(300);
+export async function getActiveBulletins(_estateId: string): Promise<Bulletin[]> {
   const now = new Date().toISOString();
-  return mock.bulletins
-    .filter((b) => b.estate_id === estateId && (!b.pinned_until || b.pinned_until > now))
-    .sort((a, b) => b.created_at.localeCompare(a.created_at));
+  const rows = check(
+    await supabase
+      .from('bulletins')
+      .select('*')
+      .or(`pinned_until.is.null,pinned_until.gt.${now}`)
+      .order('created_at', { ascending: false })
+  );
+  return (rows ?? []) as Bulletin[];
 }
 
 export async function createReport(
@@ -274,16 +308,26 @@ export async function createReport(
   target_id: string,
   reason: string
 ): Promise<void> {
-  await delay(300);
-  mock.reports.push({
-    id: `rpt-${Date.now()}`,
-    reporter_id: reporterId,
-    target_type,
-    target_id,
-    reason,
-    status: 'open',
-    created_at: new Date().toISOString(),
-  });
+  // Chat messages are still mock data until chat moves to Supabase.
+  if (target_type === 'message') {
+    mock.reports.push({
+      id: `rpt-${Date.now()}`,
+      reporter_id: reporterId,
+      target_type,
+      target_id,
+      reason,
+      status: 'open',
+      created_at: new Date().toISOString(),
+    });
+    return;
+  }
+  check(
+    await supabase.rpc('create_report', {
+      p_target_type: target_type,
+      p_target_id: target_id,
+      p_reason: reason,
+    })
+  );
 }
 
 // ─── Chat ─────────────────────────────────────────────────────────────────
