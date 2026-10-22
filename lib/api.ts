@@ -48,8 +48,26 @@ async function fetchProfile(id: string): Promise<User> {
 const AUTH_MESSAGES: Record<string, string> = {
   'Invalid login credentials': 'Incorrect email or password.',
   'User already registered': 'An account with this email already exists.',
+  'Token has expired or is invalid': 'That code is wrong or has expired. Request a new one.',
+  'New password should be different from the old password.':
+    'Choose a password that is different from your old one.',
 };
 const authError = (message: string) => new ApiError(AUTH_MESSAGES[message] ?? message);
+
+/** Calls an Edge Function, turning its `{ error }` reply into an ApiError. */
+async function callFunction<T = unknown>(name: string, body: object): Promise<T> {
+  const { data, error } = await supabase.functions.invoke<T>(name, { body, timeout: 20_000 });
+  if (error) {
+    let message = 'Something went wrong. Please try again.';
+    try {
+      message = (await error.context.json()).error ?? message;
+    } catch {
+      // network error or a non-JSON reply
+    }
+    throw new ApiError(message);
+  }
+  return data as T;
+}
 
 // ─── Estates & accounts ───────────────────────────────────────────────────
 
@@ -114,12 +132,41 @@ export function onSignedOut(callback: () => void) {
   return () => data.subscription.unsubscribe();
 }
 
-/** Always resolves, so the response never reveals whether an account exists. */
+// Password reset uses a code from the email instead of a link, so it works
+// in Expo Go, on the web, and when the email is opened on another device.
+
+/** Emails a reset code. Succeeds even for unknown emails, so it never reveals who has an account. */
 export async function requestPasswordReset(email: string): Promise<void> {
   if (!email.trim()) throw new ApiError('Enter your email address.');
   const { error } = await supabase.auth.resetPasswordForEmail(email.trim().toLowerCase());
-  if (error) throw new ApiError(error.message);
+  if (error) throw authError(error.message);
 }
+
+/**
+ * Checks the emailed code. This signs the user in behind the scenes, but the
+ * app only lets them in after setNewPassword (or cancelPasswordReset).
+ */
+export async function verifyResetCode(email: string, code: string): Promise<void> {
+  const token = code.replace(/\s/g, '');
+  if (!/^\d{6,10}$/.test(token)) throw new ApiError('Enter the code from the email.');
+  const { error } = await supabase.auth.verifyOtp({
+    email: email.trim().toLowerCase(),
+    token,
+    type: 'recovery',
+  });
+  if (error) throw authError(error.message);
+}
+
+/** Saves the new password after verifyResetCode and returns the signed-in user. */
+export async function setNewPassword(password: string): Promise<User> {
+  if (password.length < 8) throw new ApiError('Use at least 8 characters.');
+  const { data, error } = await supabase.auth.updateUser({ password });
+  if (error) throw authError(error.message);
+  return fetchProfile(data.user.id);
+}
+
+/** Drops the half-finished login of a reset that was verified but not completed. */
+export const cancelPasswordReset = signOut;
 
 /** Latest copy of a user, e.g. to notice when management has reviewed them. */
 export async function getUser(id: string): Promise<User | undefined> {
@@ -658,19 +705,21 @@ const cleanUserInput = (input: AdminUserInput): AdminUserInput => ({
   street: input.street.trim(),
 });
 
-/**
- * Adds a resident or a management account directly. Creating someone else's
- * login needs the secret key, so this will call an Edge Function (next step).
- */
+/** Adds a resident or manager with a temporary password (admin-users Edge Function). */
 export async function adminCreateUser(
   viewer: User,
   input: AdminUserInput & { password: string; role?: 'resident' | 'management' }
 ): Promise<User> {
   assertAdmin(viewer);
   validateAdminUser(input);
-  throw new ApiError(
-    'Adding accounts from the app isn’t available yet. Ask the person to sign up in the app, then approve them here.'
-  );
+  if (input.password.length < 8) throw new ApiError('The password needs at least 8 characters.');
+  const { id } = await callFunction<{ id: string }>('admin-users', {
+    action: 'create',
+    user: { ...cleanUserInput(input), password: input.password, role: input.role ?? 'resident' },
+  });
+  const user = await getUser(id);
+  if (!user) throw new ApiError('The account was added but could not be loaded.');
+  return user;
 }
 
 /** Edits a resident's or manager's details (not their role, status or password). */
@@ -688,7 +737,7 @@ export async function adminUpdateUser(
   if (!current) throw new ApiError('User not found.');
   // The email is also the login, which only the server (secret key) can change.
   if (current.email !== email) {
-    throw new ApiError('Changing someone’s email isn’t supported yet. Edit the other details only.');
+    await callFunction('admin-users', { action: 'update_email', user_id: userId, email });
   }
   const row = check(
     await supabase

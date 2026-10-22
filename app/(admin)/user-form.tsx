@@ -137,6 +137,7 @@ export default function UserForm() {
             label="Email"
             value={form.email}
             onChangeText={set('email')}
+            helper={editing ? 'This is also the email they sign in with.' : undefined}
             autoCapitalize="none"
             keyboardType="email-address"
           />

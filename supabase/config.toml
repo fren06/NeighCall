@@ -5,3 +5,6 @@ project_id = "NeighCall"
 # newer JWT signing keys, which the built-in check doesn't support).
 [functions.analyze-post]
 verify_jwt = false
+
+[functions.admin-users]
+verify_jwt = false
