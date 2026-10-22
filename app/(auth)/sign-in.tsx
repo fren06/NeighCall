@@ -20,6 +20,8 @@ export default function SignIn() {
     setBusy(true);
     try {
       await signIn(email, password);
+      // Index sends the user to pending, home, management or admin.
+      router.replace('/');
     } catch (e) {
       setError((e as Error).message);
       setBusy(false);
@@ -64,12 +66,6 @@ export default function SignIn() {
         <Button variant="link" onPress={() => router.replace('/sign-up')}>
           <ButtonText>New here? Create an account</ButtonText>
         </Button>
-
-        {__DEV__ && (
-          <Text size="xs" className="text-center text-muted-foreground">
-            Demo account: aisyah@example.com / password
-          </Text>
-        )}
       </VStack>
     </Screen>
   );

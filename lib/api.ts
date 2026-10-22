@@ -2,6 +2,7 @@
 // mock implementation for Supabase later doesn't touch any UI code.
 import { analyzeText } from '@/lib/mock-ai';
 import * as mock from '@/lib/mock-data';
+import { supabase } from '@/lib/supabase';
 import { DEFAULT_NOTIFICATIONS, isAdmin, isStaff } from '@/types/models';
 import type {
   Bulletin,
@@ -29,74 +30,123 @@ const delay = (ms = 400) => new Promise((r) => setTimeout(r, ms));
 
 export class ApiError extends Error {}
 
+// ─── Supabase helpers ─────────────────────────────────────────────────────
+// Sections below marked "Supabase" talk to the real backend; the rest still
+// use mock-data until they're migrated.
+
+/** Unwraps a Supabase response, turning its error into an ApiError. */
+function check<T>({ data, error }: { data: T; error: { message: string } | null }): T {
+  if (error) throw new ApiError(error.message);
+  return data;
+}
+
+const USER_COLUMNS =
+  'id, estate_id, name, email, phone, block, unit_number, street, skills, notifications, role, status, admin_note, warning_count, created_at';
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const toUser = (row: any): User => ({ ...row, admin_note: row.admin_note ?? undefined });
+
+async function fetchProfile(id: string): Promise<User> {
+  const row = check(await supabase.from('users').select(USER_COLUMNS).eq('id', id).maybeSingle());
+  if (!row) throw new ApiError('No NeighCall profile was found for this account.');
+  return toUser(row);
+}
+
+const AUTH_MESSAGES: Record<string, string> = {
+  'Invalid login credentials': 'Incorrect email or password.',
+  'User already registered': 'An account with this email already exists.',
+};
+const authError = (message: string) => new ApiError(AUTH_MESSAGES[message] ?? message);
+
+// ─── Estates & accounts (Supabase) ────────────────────────────────────────
+
 export async function getEstates(): Promise<Estate[]> {
-  await delay(200);
-  return mock.estates;
+  return check(await supabase.from('estates').select('id, name, area').order('name')) ?? [];
 }
 
 export async function getEstate(id: string): Promise<Estate | undefined> {
-  return mock.estates.find((e) => e.id === id);
+  return check(await supabase.from('estates').select('id, name, area').eq('id', id).maybeSingle()) ?? undefined;
 }
 
 export async function signUp(input: SignUpInput): Promise<User> {
-  await delay();
-  const email = input.email.trim().toLowerCase();
-  if (mock.users.some((u) => u.email === email)) {
-    throw new ApiError('An account with this email already exists.');
+  const { email, password, ...profile } = input;
+  const { data, error } = await supabase.auth.signUp({
+    email: email.trim().toLowerCase(),
+    password,
+    // Read by the handle_new_auth_user trigger to create the profile row.
+    options: { data: profile },
+  });
+  if (error) throw authError(error.message);
+  if (!data.session || !data.user) {
+    throw new ApiError('Check your email to confirm your account, then sign in.');
   }
-  const { password, ...profile } = input;
-  const user: User = {
-    ...profile,
-    email,
-    notifications: DEFAULT_NOTIFICATIONS,
-    id: `usr-${Date.now()}`,
-    role: 'resident',
-    status: 'pending',
-    created_at: new Date().toISOString(),
-  };
-  mock.users.push(user);
-  mock.passwords[email] = password;
-  return user;
+  return fetchProfile(data.user.id);
 }
 
 export async function signIn(email: string, password: string): Promise<User> {
-  await delay();
-  const key = email.trim().toLowerCase();
-  const user = mock.users.find((u) => u.email === key);
-  if (!user || mock.passwords[key] !== password) {
-    throw new ApiError('Incorrect email or password.');
+  const { data, error } = await supabase.auth.signInWithPassword({
+    email: email.trim().toLowerCase(),
+    password,
+  });
+  if (error) throw authError(error.message);
+  try {
+    return await fetchProfile(data.user.id);
+  } catch (e) {
+    await supabase.auth.signOut({ scope: 'local' });
+    throw e;
   }
-  return user;
 }
 
-/**
- * Mock of Supabase `resetPasswordForEmail`. Always resolves so the response
- * never reveals whether an account exists for the address.
- */
+export async function signOut(): Promise<void> {
+  await supabase.auth.signOut({ scope: 'local' });
+}
+
+/** The signed-in user from a saved login, if there is one. */
+export async function restoreSession(): Promise<User | null> {
+  const { data } = await supabase.auth.getSession();
+  if (!data.session) return null;
+  try {
+    return await fetchProfile(data.session.user.id);
+  } catch {
+    await signOut();
+    return null;
+  }
+}
+
+/** Calls back when the login ends elsewhere (expired, or signed out on another tab). */
+export function onSignedOut(callback: () => void) {
+  const { data } = supabase.auth.onAuthStateChange((event) => {
+    if (event === 'SIGNED_OUT') callback();
+  });
+  return () => data.subscription.unsubscribe();
+}
+
+/** Always resolves, so the response never reveals whether an account exists. */
 export async function requestPasswordReset(email: string): Promise<void> {
-  await delay(600);
   if (!email.trim()) throw new ApiError('Enter your email address.');
+  const { error } = await supabase.auth.resetPasswordForEmail(email.trim().toLowerCase());
+  if (error) throw new ApiError(error.message);
 }
 
 /** Latest copy of a user, e.g. to notice when management has reviewed them. */
 export async function getUser(id: string): Promise<User | undefined> {
-  const user = mock.users.find((u) => u.id === id);
-  return user && { ...user };
+  const row = check(await supabase.from('users').select(USER_COLUMNS).eq('id', id).maybeSingle());
+  return row ? toUser(row) : undefined;
 }
 
-export async function updateProfile(
-  userId: string,
-  changes: Partial<Omit<User, 'id' | 'role' | 'status'>>
-): Promise<User> {
-  await delay();
-  const user = mock.users.find((u) => u.id === userId);
-  if (!user) throw new ApiError('User not found.');
-  // Resubmitting details after "needs_info" puts the user back in the queue.
-  Object.assign(user, changes, {
-    status: user.status === 'needs_info' ? 'pending' : user.status,
-    admin_note: undefined,
-  });
-  return { ...user };
+/** Fields a user may send when editing their own profile. */
+type ProfileChanges = Partial<
+  Pick<User, 'name' | 'phone' | 'block' | 'unit_number' | 'street' | 'skills' | 'notifications'>
+>;
+
+/** Resubmitting details after "needs_info" puts the user back in the queue. */
+export async function updateProfile(userId: string, changes: ProfileChanges): Promise<User> {
+  const current = await fetchProfile(userId);
+  const status = current.status === 'needs_info' ? 'pending' : current.status;
+  const row = check(
+    await supabase.from('users').update({ ...changes, status }).eq('id', userId).select(USER_COLUMNS).single()
+  );
+  return toUser(row);
 }
 
 // ─── Posting ──────────────────────────────────────────────────────────────
@@ -422,25 +472,10 @@ export async function updatePreferences(
   userId: string,
   changes: Partial<Pick<User, 'phone' | 'skills' | 'notifications'>>
 ): Promise<User> {
-  await delay(300);
-  const user = mock.users.find((u) => u.id === userId);
-  if (!user) throw new ApiError('User not found.');
-  Object.assign(user, changes);
-  return { ...user };
-}
-
-/** Dev-only: simulates the admin acting on a registration. */
-export async function devSetStatus(
-  userId: string,
-  status: User['status'],
-  admin_note?: string
-): Promise<User> {
-  await delay(150);
-  const user = mock.users.find((u) => u.id === userId);
-  if (!user) throw new ApiError('User not found.');
-  user.status = status;
-  user.admin_note = admin_note;
-  return { ...user };
+  const row = check(
+    await supabase.from('users').update(changes).eq('id', userId).select(USER_COLUMNS).single()
+  );
+  return toUser(row);
 }
 
 
@@ -779,13 +814,11 @@ export async function adminDeleteUser(viewer: User, userId: string): Promise<voi
   purgeUser(user);
 }
 
-/** Lets a resident delete their own account and everything they posted. */
+/** Lets a resident delete their own account and everything they posted (Supabase). */
 export async function deleteOwnAccount(viewer: User): Promise<void> {
-  await delay(400);
   if (viewer.role !== 'resident') throw new ApiError('Staff accounts are removed by an admin.');
-  const user = mock.users.find((u) => u.id === viewer.id);
-  if (!user) throw new ApiError('User not found.');
-  purgeUser(user);
+  check(await supabase.rpc('delete_own_account'));
+  await signOut();
 }
 
 function purgeUser(user: User) {

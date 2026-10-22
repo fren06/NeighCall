@@ -62,11 +62,10 @@ function RootLayoutNav() {
               which redirects to the right place. */}
           <Stack screenOptions={{ headerShown: false }}>
             <Stack.Screen name="index" />
-            <Stack.Protected guard={!user}>
+            {/* (auth) also holds the pending screen, so it stays open
+                until the account is approved. */}
+            <Stack.Protected guard={status !== 'approved'}>
               <Stack.Screen name="(auth)" />
-            </Stack.Protected>
-            <Stack.Protected guard={!!user && status !== 'approved'}>
-              <Stack.Screen name="pending" />
             </Stack.Protected>
             <Stack.Protected guard={status === 'approved' && !staff && !admin}>
               <Stack.Screen name="(app)" />
