@@ -1,5 +1,5 @@
-// Keyword-based stand-in for the LLM pipeline. Returns the same PostAnalysis
-// shape the real model (structured output) will, so callers don't change.
+// Keyword matcher used when the AI (analyze-post Edge Function) is unreachable
+// or skips a field. Returns the same PostAnalysis shape as the AI.
 import type { PostAnalysis, Urgency } from '@/types/models';
 
 type Category = PostAnalysis['category'];

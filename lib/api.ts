@@ -1,5 +1,5 @@
 // Data access layer. Screens only talk to these functions; all of them are
-// backed by Supabase. Only the AI analysis is still a local stand-in.
+// backed by Supabase (the AI analysis by the `analyze-post` Edge Function).
 import { analyzeText } from '@/lib/mock-ai';
 import { supabase } from '@/lib/supabase';
 import type { AuthChangeEvent } from '@supabase/supabase-js';
@@ -21,8 +21,6 @@ import type {
   SignUpInput,
   User,
 } from '@/types/models';
-
-const delay = (ms = 400) => new Promise((r) => setTimeout(r, ms));
 
 export class ApiError extends Error {}
 
@@ -146,14 +144,41 @@ export async function updateProfile(userId: string, changes: ProfileChanges): Pr
 
 // ─── Posting ──────────────────────────────────────────────────────────────
 
-/** Runs the AI pipeline on draft text (mock: keyword rules, on the device). */
+// The preview and the final post usually analyse the same text; ask once.
+let lastAnalysis: { key: string; result: PostAnalysis } | undefined;
+
+/**
+ * Runs the draft through the AI (the `analyze-post` Edge Function). If the
+ * AI is unreachable or leaves a field out, the on-device keyword matcher
+ * fills the gap, so posting never depends on it.
+ */
 export async function analyzePost(
   author: User,
   content: string,
   isAnonymous: boolean
 ): Promise<PostAnalysis> {
-  await delay(500);
-  return analyzeText(content, isAnonymous ? undefined : author.block);
+  const text = content.trim();
+  const key = `${author.id}|${isAnonymous}|${text}`;
+  if (lastAnalysis?.key === key) return lastAnalysis.result;
+
+  const fallback = analyzeText(text, isAnonymous ? undefined : author.block);
+  const { data, error } = await supabase.functions.invoke<Partial<PostAnalysis>>('analyze-post', {
+    body: { content: text, is_anonymous: isAnonymous },
+    timeout: 20_000,
+  });
+  if (error || !data) {
+    if (__DEV__) console.warn('analyze-post unavailable, using keyword matcher:', error?.message);
+    return fallback; // not cached, so the next try asks the AI again
+  }
+
+  const result: PostAnalysis = {
+    category: data.category ?? fallback.category,
+    urgency: data.urgency ?? fallback.urgency,
+    tools_needed: data.tools_needed ?? fallback.tools_needed,
+    punchline: data.punchline ?? fallback.punchline,
+  };
+  lastAnalysis = { key, result };
+  return result;
 }
 
 /** Approved neighbours in the author's estate who have the given skill. */
@@ -185,7 +210,7 @@ export async function createPost(
   author: User,
   input: NewPostInput
 ): Promise<{ post: FeedPost; notified: number }> {
-  const analysis = analyzeText(input.content, input.is_anonymous ? undefined : author.block);
+  const analysis = await analyzePost(author, input.content, input.is_anonymous);
   const mediaUrl = input.media_uri ? await uploadPostPhoto(author, input.media_uri) : null;
 
   // The server picks the anonymous alias and counts skill matches.
