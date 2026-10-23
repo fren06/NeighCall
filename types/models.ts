@@ -203,6 +203,22 @@ export interface ConversationSummary {
   updated_at: Timestamp;
 }
 
+// ─── Notifications ────────────────────────────────────────────────────────
+
+export type NotificationKind = 'skill_match' | 'offer' | 'message' | 'bulletin' | 'account';
+
+/** An entry in the resident's in-app inbox (the bell on the home screen). */
+export interface AppNotification {
+  id: ID;
+  kind: NotificationKind;
+  title: string;
+  body?: string;
+  /** Screen to open when tapped, e.g. /post/<id>. */
+  url?: string;
+  read_at?: Timestamp;
+  created_at: Timestamp;
+}
+
 // ─── Bulletins & moderation ───────────────────────────────────────────────
 
 export interface Bulletin {

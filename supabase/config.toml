@@ -1,0 +1,10 @@
+# Supabase CLI settings. Only what differs from the defaults is listed.
+project_id = "NeighCall"
+
+# The function checks the caller's login itself (needed with Supabase's
+# newer JWT signing keys, which the built-in check doesn't support).
+[functions.analyze-post]
+verify_jwt = false
+
+[functions.admin-users]
+verify_jwt = false

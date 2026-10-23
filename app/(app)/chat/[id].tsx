@@ -51,6 +51,8 @@ export default function Chat() {
       const data = await api.getConversation(user, id);
       setSummary(data.summary);
       setMessages(data.messages);
+      // Seen it, so clear this chat from the notification bell.
+      api.markNotificationsRead(`/chat/${id}`).catch(() => {});
     } catch {
       setSummary(null);
     }

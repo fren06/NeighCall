@@ -19,5 +19,13 @@
     "expo-env.d.ts",
     "nativewind-env.d.ts",
     "react-native-css-env.d.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "babel.config.js",
+    "metro.config.js",
+    "android",
+    "ios",
+    "supabase/functions"
   ]
 }

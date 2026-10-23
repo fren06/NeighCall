@@ -1,10 +1,11 @@
 // Data access layer. Screens only talk to these functions; all of them are
-// backed by Supabase. Only the AI analysis is still a local stand-in.
+// backed by Supabase (the AI analysis by the `analyze-post` Edge Function).
 import { analyzeText } from '@/lib/mock-ai';
 import { supabase } from '@/lib/supabase';
 import type { AuthChangeEvent } from '@supabase/supabase-js';
 import { isAdmin, isStaff } from '@/types/models';
 import type {
+  AppNotification,
   Bulletin,
   BulletinInput,
   ChatMessage,
@@ -21,8 +22,6 @@ import type {
   SignUpInput,
   User,
 } from '@/types/models';
-
-const delay = (ms = 400) => new Promise((r) => setTimeout(r, ms));
 
 export class ApiError extends Error {}
 
@@ -50,8 +49,26 @@ async function fetchProfile(id: string): Promise<User> {
 const AUTH_MESSAGES: Record<string, string> = {
   'Invalid login credentials': 'Incorrect email or password.',
   'User already registered': 'An account with this email already exists.',
+  'Token has expired or is invalid': 'That code is wrong or has expired. Request a new one.',
+  'New password should be different from the old password.':
+    'Choose a password that is different from your old one.',
 };
 const authError = (message: string) => new ApiError(AUTH_MESSAGES[message] ?? message);
+
+/** Calls an Edge Function, turning its `{ error }` reply into an ApiError. */
+async function callFunction<T = unknown>(name: string, body: object): Promise<T> {
+  const { data, error } = await supabase.functions.invoke<T>(name, { body, timeout: 20_000 });
+  if (error) {
+    let message = 'Something went wrong. Please try again.';
+    try {
+      message = (await error.context.json()).error ?? message;
+    } catch {
+      // network error or a non-JSON reply
+    }
+    throw new ApiError(message);
+  }
+  return data as T;
+}
 
 // ─── Estates & accounts ───────────────────────────────────────────────────
 
@@ -116,12 +133,41 @@ export function onSignedOut(callback: () => void) {
   return () => data.subscription.unsubscribe();
 }
 
-/** Always resolves, so the response never reveals whether an account exists. */
+// Password reset uses a code from the email instead of a link, so it works
+// in Expo Go, on the web, and when the email is opened on another device.
+
+/** Emails a reset code. Succeeds even for unknown emails, so it never reveals who has an account. */
 export async function requestPasswordReset(email: string): Promise<void> {
   if (!email.trim()) throw new ApiError('Enter your email address.');
   const { error } = await supabase.auth.resetPasswordForEmail(email.trim().toLowerCase());
-  if (error) throw new ApiError(error.message);
+  if (error) throw authError(error.message);
 }
+
+/**
+ * Checks the emailed code. This signs the user in behind the scenes, but the
+ * app only lets them in after setNewPassword (or cancelPasswordReset).
+ */
+export async function verifyResetCode(email: string, code: string): Promise<void> {
+  const token = code.replace(/\s/g, '');
+  if (!/^\d{6,10}$/.test(token)) throw new ApiError('Enter the code from the email.');
+  const { error } = await supabase.auth.verifyOtp({
+    email: email.trim().toLowerCase(),
+    token,
+    type: 'recovery',
+  });
+  if (error) throw authError(error.message);
+}
+
+/** Saves the new password after verifyResetCode and returns the signed-in user. */
+export async function setNewPassword(password: string): Promise<User> {
+  if (password.length < 8) throw new ApiError('Use at least 8 characters.');
+  const { data, error } = await supabase.auth.updateUser({ password });
+  if (error) throw authError(error.message);
+  return fetchProfile(data.user.id);
+}
+
+/** Drops the half-finished login of a reset that was verified but not completed. */
+export const cancelPasswordReset = signOut;
 
 /** Latest copy of a user, e.g. to notice when management has reviewed them. */
 export async function getUser(id: string): Promise<User | undefined> {
@@ -146,14 +192,41 @@ export async function updateProfile(userId: string, changes: ProfileChanges): Pr
 
 // ─── Posting ──────────────────────────────────────────────────────────────
 
-/** Runs the AI pipeline on draft text (mock: keyword rules, on the device). */
+// The preview and the final post usually analyse the same text; ask once.
+let lastAnalysis: { key: string; result: PostAnalysis } | undefined;
+
+/**
+ * Runs the draft through the AI (the `analyze-post` Edge Function). If the
+ * AI is unreachable or leaves a field out, the on-device keyword matcher
+ * fills the gap, so posting never depends on it.
+ */
 export async function analyzePost(
   author: User,
   content: string,
   isAnonymous: boolean
 ): Promise<PostAnalysis> {
-  await delay(500);
-  return analyzeText(content, isAnonymous ? undefined : author.block);
+  const text = content.trim();
+  const key = `${author.id}|${isAnonymous}|${text}`;
+  if (lastAnalysis?.key === key) return lastAnalysis.result;
+
+  const fallback = analyzeText(text, isAnonymous ? undefined : author.block);
+  const { data, error } = await supabase.functions.invoke<Partial<PostAnalysis>>('analyze-post', {
+    body: { content: text, is_anonymous: isAnonymous },
+    timeout: 20_000,
+  });
+  if (error || !data) {
+    if (__DEV__) console.warn('analyze-post unavailable, using keyword matcher:', error?.message);
+    return fallback; // not cached, so the next try asks the AI again
+  }
+
+  const result: PostAnalysis = {
+    category: data.category ?? fallback.category,
+    urgency: data.urgency ?? fallback.urgency,
+    tools_needed: data.tools_needed ?? fallback.tools_needed,
+    punchline: data.punchline ?? fallback.punchline,
+  };
+  lastAnalysis = { key, result };
+  return result;
 }
 
 /** Approved neighbours in the author's estate who have the given skill. */
@@ -185,7 +258,7 @@ export async function createPost(
   author: User,
   input: NewPostInput
 ): Promise<{ post: FeedPost; notified: number }> {
-  const analysis = analyzeText(input.content, input.is_anonymous ? undefined : author.block);
+  const analysis = await analyzePost(author, input.content, input.is_anonymous);
   const mediaUrl = input.media_uri ? await uploadPostPhoto(author, input.media_uri) : null;
 
   // The server picks the anonymous alias and counts skill matches.
@@ -324,6 +397,67 @@ export async function createReport(
  * server sends an empty "changed" ping on channel `chat:<id>`; the screen
  * then refetches through getConversation.
  */
+/**
+ * Calls back when a request, offer of help or bulletin in the estate changes
+ * (a content-free ping from the ping_feed trigger). Bursts of changes, like
+ * a moderator clearing several posts, are combined into one call.
+ */
+export function subscribeToFeed(estateId: string, onChange: () => void) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const channel = supabase
+    .channel(`feed:${estateId}`)
+    .on('broadcast', { event: 'changed' }, () => {
+      clearTimeout(timer);
+      timer = setTimeout(onChange, 300);
+    })
+    .subscribe();
+  return () => {
+    clearTimeout(timer);
+    void supabase.removeChannel(channel);
+  };
+}
+
+// ─── Notifications (in-app inbox) ─────────────────────────────────────────
+
+/** The signed-in user's latest notifications, newest first. */
+export async function getNotifications(): Promise<AppNotification[]> {
+  const rows = check(
+    await supabase
+      .from('notifications')
+      .select('id, kind, title, body, url, read_at, created_at')
+      .order('created_at', { ascending: false })
+      .limit(50)
+  );
+  return (rows ?? []) as AppNotification[];
+}
+
+export async function countUnreadNotifications(): Promise<number> {
+  return countRows(
+    supabase.from('notifications').select('id', { count: 'exact', head: true }).is('read_at', null)
+  );
+}
+
+/** Marks every notification read, or only those that open `url`. */
+export async function markNotificationsRead(url?: string): Promise<void> {
+  check(await supabase.rpc('mark_notifications_read', { p_url: url ?? null }));
+}
+
+/** Calls back when the user's inbox changes (content-free ping, like the feed). */
+export function subscribeToInbox(userId: string, onChange: () => void) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const channel = supabase
+    .channel(`inbox:${userId}`)
+    .on('broadcast', { event: 'changed' }, () => {
+      clearTimeout(timer);
+      timer = setTimeout(onChange, 300);
+    })
+    .subscribe();
+  return () => {
+    clearTimeout(timer);
+    void supabase.removeChannel(channel);
+  };
+}
+
 export function subscribeToConversation(conversationId: string, onChange: () => void) {
   const channel = supabase
     .channel(`chat:${conversationId}`)
@@ -633,19 +767,21 @@ const cleanUserInput = (input: AdminUserInput): AdminUserInput => ({
   street: input.street.trim(),
 });
 
-/**
- * Adds a resident or a management account directly. Creating someone else's
- * login needs the secret key, so this will call an Edge Function (next step).
- */
+/** Adds a resident or manager with a temporary password (admin-users Edge Function). */
 export async function adminCreateUser(
   viewer: User,
   input: AdminUserInput & { password: string; role?: 'resident' | 'management' }
 ): Promise<User> {
   assertAdmin(viewer);
   validateAdminUser(input);
-  throw new ApiError(
-    'Adding accounts from the app isn’t available yet. Ask the person to sign up in the app, then approve them here.'
-  );
+  if (input.password.length < 8) throw new ApiError('The password needs at least 8 characters.');
+  const { id } = await callFunction<{ id: string }>('admin-users', {
+    action: 'create',
+    user: { ...cleanUserInput(input), password: input.password, role: input.role ?? 'resident' },
+  });
+  const user = await getUser(id);
+  if (!user) throw new ApiError('The account was added but could not be loaded.');
+  return user;
 }
 
 /** Edits a resident's or manager's details (not their role, status or password). */
@@ -663,7 +799,7 @@ export async function adminUpdateUser(
   if (!current) throw new ApiError('User not found.');
   // The email is also the login, which only the server (secret key) can change.
   if (current.email !== email) {
-    throw new ApiError('Changing someone’s email isn’t supported yet. Edit the other details only.');
+    await callFunction('admin-users', { action: 'update_email', user_id: userId, email });
   }
   const row = check(
     await supabase
