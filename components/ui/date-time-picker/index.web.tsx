@@ -98,7 +98,13 @@ const DateTimePicker = React.forwardRef<
     <View ref={ref} className={`relative ${className || ''}`} style={style}>
       {/* Trigger Input */}
       <Pressable
-        onPress={() => !disabled && setIsOpen(true)}
+        onPress={() => {
+          if (disabled) return;
+          // Start from the saved value, not whatever was typed last time.
+          setTempDate(value);
+          setTempTime(value ? formatTimeForInput(value) : '');
+          setIsOpen(true);
+        }}
         className="w-full"
       >
         <View className="flex-row items-center border border-border rounded-md px-3 py-2 bg-background">
@@ -111,9 +117,11 @@ const DateTimePicker = React.forwardRef<
         </View>
       </Pressable>
 
-      {/* Modal/Dropdown */}
+      {/* Opens in place and pushes the content below it down. A floating
+          (absolute) panel ended up underneath later sections of the page,
+          e.g. the Appearance buttons on the profile screen. */}
       {isOpen && (
-        <View className="absolute top-full left-0 right-0 mt-2 bg-background border border-border rounded-lg shadow-lg p-4 z-50">
+        <View className="mt-2 bg-background border border-border rounded-lg p-3">
           {/* Date Picker */}
           {(mode === 'date' || mode === 'datetime') && (
             <View className="mb-4">
@@ -142,16 +150,16 @@ const DateTimePicker = React.forwardRef<
           )}
 
           {/* Actions */}
-          <View className="flex-row justify-end gap-2">
+          <View className="flex-row gap-2">
             <Pressable
               onPress={handleCancel}
-              className="px-4 py-2 rounded bg-muted"
+              className="flex-1 items-center px-2 py-2 rounded bg-muted"
             >
               <span className="text-muted-foreground text-sm">Cancel</span>
             </Pressable>
             <Pressable
               onPress={handleConfirm}
-              className="px-4 py-2 rounded bg-primary"
+              className="flex-1 items-center px-2 py-2 rounded bg-primary"
             >
               <span className="text-primary-foreground text-sm">Confirm</span>
             </Pressable>

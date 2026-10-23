@@ -130,3 +130,14 @@
   --color-brand: rgb(var(--brand));
   --color-brand-foreground: rgb(var(--brand-foreground));
 }
+
+/* Web only: dropdowns (e.g. the estate picker on sign-up) open the browser's
+   own list. Preflight makes its text inherit the page colour while the
+   browser keeps a white list, so in dark mode the options were white on
+   white. Give the list the app's popover colours in both themes. */
+@layer base {
+  select option {
+    background-color: rgb(var(--popover));
+    color: rgb(var(--popover-foreground));
+  }
+}
