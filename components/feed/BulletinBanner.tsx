@@ -8,15 +8,27 @@ import React, { useState } from 'react';
 import { View } from 'react-native';
 
 /** Official notice from estate management, pinned above the feed. Tap to expand. */
-export function BulletinBanner({ bulletin }: { bulletin: Bulletin }) {
+export function BulletinBanner({
+  bulletin,
+  className = '',
+  onPress,
+}: {
+  bulletin: Bulletin;
+  className?: string;
+  /** Called on tap as well as expanding, e.g. to pause the carousel. */
+  onPress?: () => void;
+}) {
   const [expanded, setExpanded] = useState(false);
 
   return (
     <Pressable
-      onPress={() => setExpanded((e) => !e)}
+      onPress={() => {
+        setExpanded((e) => !e);
+        onPress?.();
+      }}
       accessibilityRole="button"
       accessibilityHint={expanded ? 'Collapse notice' : 'Expand notice'}
-      className="gap-2 rounded-xl bg-primary p-4"
+      className={`gap-2 rounded-xl bg-primary p-4 ${className}`}
     >
       <View className="flex-row items-center gap-2">
         <Icon as={Megaphone} size="sm" className="text-primary-foreground" />

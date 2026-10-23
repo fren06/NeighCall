@@ -19,10 +19,11 @@ import { Text } from '@/components/ui/text';
 import * as api from '@/lib/api';
 import { useSession } from '@/lib/session';
 import { useNotify } from '@/lib/use-notify';
-import type { ChatMessage, ConversationSummary } from '@/types/models';
+import { isSuspended, type ChatMessage, type ConversationSummary } from '@/types/models';
 import { router, useLocalSearchParams } from 'expo-router';
 import {
   ArrowLeft,
+  Ban,
   EllipsisVertical,
   FileText,
   Flag,
@@ -80,6 +81,8 @@ export default function Chat() {
   const isRequester = summary.my_role === 'requester';
   const iAmAnonymous = isRequester && summary.is_anonymous_post && !summary.is_identity_revealed;
   const sharedByMe = messages.some((m) => m.type === 'identity_card' && m.from === 'me');
+  // Suspended residents can read the chat but not take part (the server refuses it too).
+  const suspended = isSuspended(user);
   const openPost = () =>
     router.push({ pathname: '/post/[id]', params: { id: summary.post_id } });
 
@@ -88,20 +91,22 @@ export default function Chat() {
       <Icon as={FileText} size="sm" className="mr-2 text-foreground" />
       <MenuItemLabel>View request</MenuItemLabel>
     </MenuItem>,
-    !sharedByMe && (
+    !sharedByMe && !suspended && (
       <MenuItem key="share" textValue="Share my details" onPress={() => setDialog({ kind: 'share' })}>
         <Icon as={IdCard} size="sm" className="mr-2 text-foreground" />
         <MenuItemLabel>Share my details</MenuItemLabel>
       </MenuItem>
     ),
-    <MenuItem
-      key="report"
-      textValue="Report user"
-      onPress={() => setDialog({ kind: 'report-peer' })}
-    >
-      <Icon as={Flag} size="sm" className="mr-2 text-destructive" />
-      <MenuItemLabel className="text-destructive">Report user</MenuItemLabel>
-    </MenuItem>,
+    !suspended && (
+      <MenuItem
+        key="report"
+        textValue="Report user"
+        onPress={() => setDialog({ kind: 'report-peer' })}
+      >
+        <Icon as={Flag} size="sm" className="mr-2 text-destructive" />
+        <MenuItemLabel className="text-destructive">Report user</MenuItemLabel>
+      </MenuItem>
+    ),
   ].filter((item): item is React.JSX.Element => !!item);
 
   const send = async () => {
@@ -191,7 +196,7 @@ export default function Chat() {
               ? `You're anonymous here. ${displayName(summary.peer).split(' ')[0]} can't see your name or unit until you share them.`
               : "This neighbour is anonymous. They can choose to share their details with you."}
           </Text>
-          {iAmAnonymous && (
+          {iAmAnonymous && !suspended && (
             <Button size="sm" variant="brand" onPress={() => setDialog({ kind: 'share' })}>
               <ButtonText>Share</ButtonText>
             </Button>
@@ -211,7 +216,7 @@ export default function Chat() {
             <MessageBubble
               message={item}
               onLongPress={
-                item.from === 'them'
+                item.from === 'them' && !suspended
                   ? () => setDialog({ kind: 'report-message', id: item.id })
                   : undefined
               }
@@ -221,7 +226,16 @@ export default function Chat() {
           keyboardShouldPersistTaps="handled"
         />
 
-        {/* Composer */}
+        {/* Composer (a short explanation instead, while suspended) */}
+        {suspended ? (
+          <View className="w-full max-w-xl flex-row items-center gap-3 self-center border-t border-border px-4 py-3">
+            <Icon as={Ban} size="sm" className="text-destructive" />
+            <Text size="sm" className="flex-1 text-muted-foreground">
+              Your account is suspended, so you can't send messages. Contact your estate
+              management office for help.
+            </Text>
+          </View>
+        ) : (
         <View className="w-full max-w-xl flex-row items-end gap-2 self-center border-t border-border px-3 py-2">
           {!sharedByMe && (
             <Button
@@ -254,6 +268,7 @@ export default function Chat() {
             <ButtonIcon as={SendHorizontal} />
           </Button>
         </View>
+        )}
       </KeyboardAvoidingView>
 
       <AlertDialog isOpen={!!dialog} onClose={() => setDialog(null)}>

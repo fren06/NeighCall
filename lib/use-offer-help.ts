@@ -1,6 +1,7 @@
 import * as api from '@/lib/api';
 import { useSession } from '@/lib/session';
 import { useNotify } from '@/lib/use-notify';
+import { isSuspended, SUSPENDED_MESSAGE } from '@/types/models';
 import { router } from 'expo-router';
 import { useCallback } from 'react';
 
@@ -12,6 +13,10 @@ export function useOfferHelp() {
   return useCallback(
     async (postId: string) => {
       if (!user) return;
+      if (isSuspended(user)) {
+        notify('Account suspended', SUSPENDED_MESSAGE);
+        return;
+      }
       try {
         const id = await api.offerHelp(user, postId);
         router.push({ pathname: '/chat/[id]', params: { id } });
