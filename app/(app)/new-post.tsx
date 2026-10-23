@@ -1,3 +1,4 @@
+import { SuspendedNotice } from '@/components/SuspendedNotice';
 import { Button, ButtonIcon, ButtonSpinner, ButtonText } from '@/components/ui/button';
 import { Icon } from '@/components/ui/icon';
 import { KeyboardAvoidingView } from '@/components/ui/keyboard-avoiding-view';
@@ -14,7 +15,7 @@ import { useSession } from '@/lib/session';
 import { palette } from '@/lib/theme';
 import { useIsDark } from '@/lib/theme-mode';
 import { useNotify } from '@/lib/use-notify';
-import type { PostAnalysis } from '@/types/models';
+import { isSuspended, type PostAnalysis } from '@/types/models';
 import * as ImagePicker from 'expo-image-picker';
 import { router } from 'expo-router';
 import { BellRing, Camera, ImagePlus, Sparkles, VenetianMask, X } from 'lucide-react-native';
@@ -64,6 +65,19 @@ export default function NewPost() {
   }, [trimmed, isAnonymous, user]);
 
   if (!user) return null;
+
+  if (isSuspended(user)) {
+    return (
+      <SafeAreaView className="flex-1 bg-background">
+        <View className="w-full max-w-xl gap-4 self-center p-4">
+          <SuspendedNotice note={user.admin_note} />
+          <Button variant="outline" onPress={() => router.back()}>
+            <ButtonText>Go back</ButtonText>
+          </Button>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   const pickImage = async (source: 'camera' | 'library') => {
     if (source === 'camera') {

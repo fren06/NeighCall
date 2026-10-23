@@ -51,6 +51,9 @@ function RootLayoutNav() {
   const status = user?.status;
   const admin = !!user && isAdmin(user);
   const staff = !!user && isStaff(user) && !admin;
+  // Suspended residents stay in the app, read-only (0005_suspended_residents.sql).
+  const resident =
+    !!user && !admin && !staff && (status === 'approved' || status === 'suspended');
 
   return (
     <ThemeProvider value={isDark ? DarkTheme : DefaultTheme}>
@@ -64,10 +67,10 @@ function RootLayoutNav() {
             <Stack.Screen name="index" />
             {/* (auth) also holds the pending screen, so it stays open
                 until the account is approved. */}
-            <Stack.Protected guard={status !== 'approved'}>
+            <Stack.Protected guard={status !== 'approved' && !resident}>
               <Stack.Screen name="(auth)" />
             </Stack.Protected>
-            <Stack.Protected guard={status === 'approved' && !staff && !admin}>
+            <Stack.Protected guard={resident}>
               <Stack.Screen name="(app)" />
             </Stack.Protected>
             <Stack.Protected guard={status === 'approved' && admin}>

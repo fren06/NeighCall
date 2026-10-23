@@ -8,7 +8,9 @@ export default function Index() {
 
   if (!ready) return null; // still checking for a saved login
   if (!user) return <Redirect href="/welcome" />;
-  if (user.status !== 'approved') return <Redirect href="/pending" />;
+  // Suspended residents still get the (read-only) app; see 0005_suspended_residents.sql.
+  const suspendedResident = user.role === 'resident' && user.status === 'suspended';
+  if (user.status !== 'approved' && !suspendedResident) return <Redirect href="/pending" />;
   if (isAdmin(user)) return <Redirect href={'/dashboard' as Href} />;
   if (isStaff(user)) return <Redirect href={'/overview' as Href} />;
   return <Redirect href="/home" />;

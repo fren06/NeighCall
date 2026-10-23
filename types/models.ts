@@ -77,6 +77,11 @@ export interface User extends Address {
 export const isStaff = (user: Pick<User, 'role'>) => user.role !== 'resident';
 export const isAdmin = (user: Pick<User, 'role'>) => user.role === 'admin';
 
+/** Suspended residents can still read the app but can't post, offer help or message. */
+export const isSuspended = (user: Pick<User, 'status'>) => user.status === 'suspended';
+export const SUSPENDED_MESSAGE =
+  "Your account is suspended, so you can't post, offer help or send messages. Contact your estate management office for help.";
+
 // ─── Skills ───────────────────────────────────────────────────────────────
 
 export const SKILLS = [

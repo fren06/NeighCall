@@ -48,8 +48,12 @@ export default function PostDetail() {
 
   const report = async () => {
     if (!user || !post) return;
-    await api.createReport(user.id, 'post', post.id, 'Reported from post');
-    notify('Report sent', 'Estate management will review it.');
+    try {
+      await api.createReport(user.id, 'post', post.id, 'Reported from post');
+      notify('Report sent', 'Estate management will review it.');
+    } catch (e) {
+      notify("Couldn't report", (e as Error).message);
+    }
   };
 
   const confirmReport = () => {

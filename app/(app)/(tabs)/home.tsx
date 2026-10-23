@@ -1,4 +1,5 @@
-import { BulletinBanner } from '@/components/feed/BulletinBanner';
+import { BulletinCarousel } from '@/components/feed/BulletinCarousel';
+import { SuspendedNotice } from '@/components/SuspendedNotice';
 import { PostCard, PostCardSkeleton } from '@/components/feed/PostCard';
 import { Button, ButtonText } from '@/components/ui/button';
 import { Fab, FabIcon } from '@/components/ui/fab';
@@ -12,7 +13,7 @@ import { useInbox } from '@/lib/inbox';
 import { useSession } from '@/lib/session';
 import { useNotify } from '@/lib/use-notify';
 import { useOfferHelp } from '@/lib/use-offer-help';
-import type { Bulletin, Estate, FeedPost, User } from '@/types/models';
+import { isSuspended, SUSPENDED_MESSAGE, type Bulletin, type Estate, type FeedPost, type User } from '@/types/models';
 import { router, useFocusEffect } from 'expo-router';
 import { Bell, Inbox, Plus } from 'lucide-react-native';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
@@ -101,9 +102,18 @@ export default function Home() {
     router.push({ pathname: '/post/[id]', params: { id: post.id } });
 
   const report = async (post: FeedPost) => {
-    await api.createReport(user.id, 'post', post.id, 'Reported from feed');
-    notify('Report sent', 'Estate management will review this post.');
+    try {
+      await api.createReport(user.id, 'post', post.id, 'Reported from feed');
+      notify('Report sent', 'Estate management will review this post.');
+    } catch (e) {
+      notify("Couldn't report", (e as Error).message);
+    }
   };
+
+  // Suspended residents can read but not post (the server refuses it anyway).
+  const suspended = isSuspended(user);
+  const askForHelp = () =>
+    suspended ? notify('Account suspended', SUSPENDED_MESSAGE) : router.push('/new-post');
 
   const header = (
     <View className="gap-5 pb-4">
@@ -132,9 +142,9 @@ export default function Home() {
         </Pressable>
       </View>
 
-      {bulletins.map((b) => (
-        <BulletinBanner key={b.id} bulletin={b} />
-      ))}
+      {suspended && <SuspendedNotice note={user.admin_note} />}
+
+      <BulletinCarousel bulletins={bulletins} />
 
       <ScrollView
         horizontal
@@ -183,7 +193,7 @@ export default function Home() {
         ListHeaderComponent={header}
         ListEmptyComponent={
           posts ? (
-            <EmptyState filter={filter} />
+            <EmptyState filter={filter} onAsk={askForHelp} />
           ) : (
             <View className="gap-3">
               <PostCardSkeleton />
@@ -200,7 +210,7 @@ export default function Home() {
         size="lg"
         placement="bottom right"
         className="h-14 w-14 bg-brand p-0 shadow-lg"
-        onPress={() => router.push('/new-post')}
+        onPress={askForHelp}
         accessibilityLabel="Ask for help"
       >
         <FabIcon as={Plus} className="h-6 w-6 text-brand-foreground" />
@@ -209,7 +219,7 @@ export default function Home() {
   );
 }
 
-function EmptyState({ filter }: { filter: Filter }) {
+function EmptyState({ filter, onAsk }: { filter: Filter; onAsk: () => void }) {
   const copy: Record<Filter, string> = {
     all: 'No requests yet. Be the first to ask your neighbours for a hand.',
     for_you: 'Nothing matching your skills right now. Add more skills in your profile.',
@@ -223,7 +233,7 @@ function EmptyState({ filter }: { filter: Filter }) {
       </View>
       <Text className="max-w-xs text-center text-muted-foreground">{copy[filter]}</Text>
       {(filter === 'all' || filter === 'mine') && (
-        <Button variant="brand" onPress={() => router.push('/new-post')}>
+        <Button variant="brand" onPress={onAsk}>
           <ButtonText>Ask for help</ButtonText>
         </Button>
       )}
